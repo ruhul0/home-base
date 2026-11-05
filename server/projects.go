@@ -41,9 +41,11 @@ const (
 )
 
 var (
-	itemID      = regexp.MustCompile(`^[A-Za-z0-9-]{1,40}$`)
-	repoName    = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	monthFormat = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
+	itemID       = regexp.MustCompile(`^[A-Za-z0-9-]{1,40}$`)
+	repoName     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	workflowFile = regexp.MustCompile(`^[A-Za-z0-9_.-]+\.ya?ml$`)
+	gitRef       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$`)
+	monthFormat  = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
 )
 
 // Project is one client site or product the user looks after.
@@ -55,6 +57,9 @@ type Project struct {
 	Repo    string `json:"repo"`
 	SSH     string `json:"ssh"`
 	Notes   string `json:"notes"`
+	// DeployWorkflow is the file name of a workflow with a workflow_dispatch trigger.
+	DeployWorkflow string `json:"deployWorkflow"`
+	DeployRef      string `json:"deployRef"`
 }
 
 // SavedCommand is one entry in the command library.
@@ -88,7 +93,13 @@ func cleanProjects(input []Project) ([]Project, bool) {
 		if utf8.RuneCountInString(project.SSH) > maxSSHLength || utf8.RuneCountInString(project.Notes) > maxProjectNotes {
 			return nil, false
 		}
-		projects = append(projects, Project{ID: project.ID, Name: name, URL: address, Staging: staging, Repo: project.Repo, SSH: strings.TrimSpace(project.SSH), Notes: project.Notes})
+		if project.DeployWorkflow != "" && (project.Repo == "" || !workflowFile.MatchString(project.DeployWorkflow)) {
+			return nil, false
+		}
+		if project.DeployRef != "" && (!gitRef.MatchString(project.DeployRef) || strings.Contains(project.DeployRef, "..")) {
+			return nil, false
+		}
+		projects = append(projects, Project{ID: project.ID, Name: name, URL: address, Staging: staging, Repo: project.Repo, SSH: strings.TrimSpace(project.SSH), Notes: project.Notes, DeployWorkflow: project.DeployWorkflow, DeployRef: project.DeployRef})
 	}
 	return projects, true
 }
@@ -699,14 +710,23 @@ func (a *App) handleProjectReport(w http.ResponseWriter, r *http.Request, curren
 	writeJSON(w, http.StatusOK, report)
 }
 
-func githubPostAs(ctx context.Context, token, path string) (int, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, envOr("GITHUB_API_URL", "https://api.github.com")+path, nil)
+func githubPostAs(ctx context.Context, token, path string, body any) (int, error) {
+	payload := []byte("{}")
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return 0, err
+		}
+		payload = encoded
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, envOr("GITHUB_API_URL", "https://api.github.com")+path, bytes.NewReader(payload))
 	if err != nil {
 		return 0, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("User-Agent", "home-base")
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
 	response, err := githubClient.Do(request)
 	if err != nil {
 		return 0, errors.New("couldn't reach GitHub")
@@ -738,7 +758,7 @@ func (a *App) handleRerunCI(w http.ResponseWriter, r *http.Request, current sess
 		return
 	}
 	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/actions/runs/" + strconv.FormatInt(body.RunID, 10) + "/rerun-failed-jobs"
-	status, err := githubPostAs(ctx, token, path)
+	status, err := githubPostAs(ctx, token, path, nil)
 	switch {
 	case err != nil:
 		writeError(w, http.StatusBadGateway, "GitHub couldn't be reached.")
@@ -754,6 +774,92 @@ func (a *App) handleRerunCI(w http.ResponseWriter, r *http.Request, current sess
 	}
 }
 
+// handleDeploy starts a project's saved deploy workflow as the user. The request names only the
+// project, so what runs is always what the user saved, and the page asks them to confirm first.
+func (a *App) handleDeploy(w http.ResponseWriter, r *http.Request, current session) {
+	ctx := r.Context()
+	workspace, err := a.store.getWorkspace(ctx, current.userID)
+	if err != nil {
+		writeServerError(w, err)
+		return
+	}
+	var project *Project
+	for index := range workspace.Projects {
+		if workspace.Projects[index].ID == r.PathValue("id") {
+			project = &workspace.Projects[index]
+		}
+	}
+	if project == nil {
+		writeError(w, http.StatusNotFound, "That project doesn't exist.")
+		return
+	}
+	owner, name, ok := strings.Cut(project.Repo, "/")
+	if !ok || project.DeployWorkflow == "" {
+		writeError(w, http.StatusBadRequest, "Choose a deploy workflow for this project first.")
+		return
+	}
+	token, err := a.validAccessToken(ctx, current.userID)
+	if err != nil || token == "" {
+		writeError(w, http.StatusConflict, "Connect private GitHub to deploy from here.")
+		return
+	}
+	ref := project.DeployRef
+	if ref == "" {
+		ref = "main"
+	}
+	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/actions/workflows/" + url.PathEscape(project.DeployWorkflow) + "/dispatches"
+	status, err := githubPostAs(ctx, token, path, map[string]string{"ref": ref})
+	switch {
+	case err != nil:
+		writeError(w, http.StatusBadGateway, "GitHub couldn't be reached.")
+	case status >= 200 && status < 300:
+		log.Printf("deploy started: user %d, %s, %s on %s", current.userID, project.Repo, project.DeployWorkflow, ref)
+		a.dev.projectCI.forget(strconv.FormatInt(current.userID, 10) + ":" + project.Repo)
+		writeOK(w)
+	case status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusNotFound:
+		writeError(w, http.StatusForbidden, "Deploying needs the Actions read and write permission on your GitHub App, and access to this repository.")
+	case status == http.StatusUnprocessableEntity:
+		writeError(w, http.StatusBadRequest, "GitHub refused it. The workflow needs a workflow_dispatch trigger, and the branch must exist.")
+	default:
+		writeError(w, http.StatusBadGateway, "GitHub couldn't start that workflow.")
+	}
+}
+
+// handleWorkflows lists a repository's workflow files, to choose a deploy workflow from.
+func (a *App) handleWorkflows(w http.ResponseWriter, r *http.Request, current session) {
+	repo := r.URL.Query().Get("repo")
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || !repoName.MatchString(repo) {
+		writeError(w, http.StatusBadRequest, "That repository name isn't valid.")
+		return
+	}
+	ctx := r.Context()
+	token, _ := a.validAccessToken(ctx, current.userID)
+	var found struct {
+		Workflows []struct {
+			Name  string `json:"name"`
+			Path  string `json:"path"`
+			State string `json:"state"`
+		} `json:"workflows"`
+	}
+	if err := githubGetAs(ctx, token, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/actions/workflows?per_page=100", &found); err != nil {
+		writeError(w, http.StatusBadGateway, "That repository's workflows couldn't be read.")
+		return
+	}
+	type workflow struct {
+		Name string `json:"name"`
+		File string `json:"file"`
+	}
+	workflows := []workflow{}
+	for _, item := range found.Workflows {
+		file, inFolder := strings.CutPrefix(item.Path, ".github/workflows/")
+		if inFolder && item.State == "active" && workflowFile.MatchString(file) {
+			workflows = append(workflows, workflow{Name: item.Name, File: file})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workflows": workflows})
+}
+
 func (a *App) registerProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/dev/projects", a.signedIn(a.handleProjects))
 	mux.HandleFunc("GET /api/dev/projects/{id}/report", a.signedIn(a.handleProjectReport))
@@ -763,6 +869,8 @@ func (a *App) registerProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/dev/time/{id}", a.signedIn(a.handleDeleteTime))
 	mux.HandleFunc("GET /api/dev/worklog", a.signedIn(a.handleWorkLog))
 	mux.HandleFunc("POST /api/dev/github/rerun", a.signedIn(a.handleRerunCI))
+	mux.HandleFunc("GET /api/dev/github/workflows", a.signedIn(a.handleWorkflows))
+	mux.HandleFunc("POST /api/dev/projects/{id}/deploy", a.signedIn(a.handleDeploy))
 }
 
 // dialerAllowsPrivate is only ever true in tests, where stand-in sites live on private addresses.

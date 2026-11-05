@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BriefcaseIcon, CheckIcon, CommandIcon, FileTextIcon, FlaskConicalIcon, GitBranchIcon, KeyboardIcon, LogOutIcon, PaletteIcon, PencilIcon, PlayIcon, PlusIcon, RotateCcwIcon, RotateCwIcon, ShieldIcon, SquareIcon, TerminalIcon, TerminalSquareIcon, WrenchIcon } from "lucide-react";
+import { BriefcaseIcon, CheckIcon, CommandIcon, FileTextIcon, FlaskConicalIcon, GitBranchIcon, KeyboardIcon, LogOutIcon, PaletteIcon, PencilIcon, PlayIcon, PlusIcon, RocketIcon, RotateCcwIcon, RotateCwIcon, ShieldIcon, SquareIcon, TerminalIcon, TerminalSquareIcon, WrenchIcon } from "lucide-react";
 import { AttentionBar } from "@/components/dev/attention-bar";
 import { ClocksCard } from "@/components/dev/clocks-card";
 import { CommandPalette, type PaletteAction } from "@/components/dev/command-palette";
 import { CommandFillDialog, CommandsCard } from "@/components/dev/commands-card";
+import { DeployDialog } from "@/components/dev/deploy-dialog";
 import { GitHubCard } from "@/components/dev/github-card";
 import { NewsCard } from "@/components/dev/news-card";
 import { ProjectReportDialog } from "@/components/dev/project-report";
@@ -105,6 +106,7 @@ export function StartPage() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteText, setPaletteText] = useState("");
   const [reportProject, setReportProject] = useState<Project | null>(null);
+  const [deployProject, setDeployProject] = useState<Project | null>(null);
   const [fillingCommand, setFillingCommand] = useState<SavedCommand | null>(null);
 
   const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -440,6 +442,7 @@ export function StartPage() {
       { label: project.name, section: "Project", keywords, icon: BriefcaseIcon, run: open(project.url) },
       { label: `Start timer: ${project.name}`, section: "Time", keywords, searchOnly: true, icon: PlayIcon, run: () => void timer.start(project.id) },
       { label: `Report: ${project.name}`, section: "Project", keywords, searchOnly: true, icon: FileTextIcon, run: () => setReportProject(project) },
+      ...(project.repo && project.deployWorkflow ? [{ label: `Deploy: ${project.name}`, section: "Action", keywords, searchOnly: true, icon: RocketIcon, run: () => setDeployProject(project) }] : []),
       ...(project.staging ? [{ label: `Staging: ${project.name}`, section: "Project", keywords, searchOnly: true, icon: FlaskConicalIcon, run: open(project.staging) }] : []),
       ...(project.repo ? [{ label: `Repo: ${project.name}`, section: "Project", keywords, searchOnly: true, icon: GitBranchIcon, run: open(`https://github.com/${project.repo}`) }] : []),
       ...(project.ssh ? [{ label: `Copy SSH: ${project.name}`, section: "Project", keywords: `${keywords} ${project.ssh}`, searchOnly: true, icon: TerminalIcon, run: () => void copyText(project.ssh, `Copied: ${project.ssh}`, toast) }] : []),
@@ -558,7 +561,7 @@ export function StartPage() {
 
             {(preferences.showProjects || preferences.showWorkLog || preferences.showTime || preferences.showCommands || preferences.showGitHub || preferences.showNews || preferences.showMonitors || preferences.showTodos || preferences.showNotes || preferences.showClocks) && (
               <section className="home-widgets mt-5" aria-label="Developer panels">
-                {preferences.showProjects && <ProjectsCard workspace={workspace} save={saveWorkspace} projects={projectStatus.projects} loading={projectStatus.loading} onRefresh={() => void projectStatus.reload()} timer={timer} onReport={setReportProject} onRerun={(repo, runId) => void rerunCI(repo, runId)} />}
+                {preferences.showProjects && <ProjectsCard workspace={workspace} save={saveWorkspace} projects={projectStatus.projects} loading={projectStatus.loading} onRefresh={() => void projectStatus.reload()} timer={timer} onReport={setReportProject} onDeploy={setDeployProject} onRerun={(repo, runId) => void rerunCI(repo, runId)} />}
                 {preferences.showWorkLog && <WorkLogCard projects={projectList} onSignedOut={signedOutElsewhere} />}
                 {preferences.showTime && <TimeCard projects={projectList} timer={timer} />}
                 {preferences.showCommands && <CommandsCard workspace={workspace} save={saveWorkspace} onUse={applyCommand} />}
@@ -603,6 +606,7 @@ export function StartPage() {
 
       <CommandPalette open={paletteOpen} groups={groups} actions={paletteActions} initialText={paletteText} onOpenChange={setPaletteOpen} />
       {reportProject && <ProjectReportDialog project={reportProject} onClose={() => setReportProject(null)} />}
+      {deployProject && <DeployDialog project={deployProject} latestRun={projectStatus.projects?.find(({ id }) => id === deployProject.id)?.ci ?? null} onDeployed={() => setTimeout(() => void projectStatus.reload(), 5000)} onSignedOut={signedOutElsewhere} onClose={() => setDeployProject(null)} />}
       {fillingCommand && <CommandFillDialog command={fillingCommand} projects={projectList} onClose={() => setFillingCommand(null)} />}
       {toolboxOpen && <ToolboxDialog open tool={toolboxTool} onOpenChange={setToolboxOpen} />}
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

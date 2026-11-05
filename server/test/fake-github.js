@@ -17,6 +17,7 @@ let lastAppToken = null;
 let revokedAll = false;
 let grantsRevoked = 0;
 let reruns = 0;
+const deploys = [];
 
 http.createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -152,6 +153,30 @@ http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/repos/alice/app/actions/runs/403/rerun-failed-jobs') {
     res.statusCode = 403;
     return res.end('{}');
+  }
+  if (req.url === '/__test/deploys') return respond({ deploys });
+  if (url.pathname === '/repos/alice/app/actions/workflows') {
+    return respond({ workflows: [
+      { name: 'Deploy', path: '.github/workflows/deploy.yml', state: 'active' },
+      { name: 'Old', path: '.github/workflows/old.yml', state: 'disabled_manually' },
+      { name: 'Pages', path: 'dynamic/pages/pages-build', state: 'active' },
+    ] });
+  }
+  const dispatch = url.pathname.match(/^\/repos\/alice\/app\/actions\/workflows\/([^/]+)\/dispatches$/);
+  if (req.method === 'POST' && dispatch) {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      if (dispatch[1] === 'denied.yml') res.statusCode = 403;
+      else if (dispatch[1] === 'manual-off.yml') res.statusCode = 422;
+      else if (!bearer.startsWith('app-token-')) res.statusCode = 401;
+      else {
+        deploys.push({ workflow: dispatch[1], ref: JSON.parse(body).ref });
+        res.statusCode = 204;
+      }
+      res.end();
+    });
+    return undefined;
   }
   if (req.url === '/__test/reruns') return respond({ reruns });
   if (url.pathname === '/repos/alice/app/actions/runs') return respond({ workflow_runs: [{ id: 1, name: 'CI', head_branch: 'main', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/alice/app/actions/runs/1', updated_at: '2026-11-01T00:00:00Z' }] });

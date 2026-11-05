@@ -12,7 +12,7 @@ A self-hosted start page for developers: a command palette, search shortcuts, Gi
 - **Command library:** saved commands with `{placeholders}`, copied from `⌘K`. Nothing runs from the page.
 - **Time tracking:** one timer per user, started and stopped with `⌥S`, with CSV export.
 - **Work log:** a day's commits, pull requests, workflow runs and tracked time, ready to copy for a standup.
-- **Re-run failed CI:** optional. It works only if you give the GitHub App the Actions read and write permission.
+- **Re-run failed CI and trigger deploys:** optional. Both work only if you give the GitHub App the Actions read and write permission. A deploy runs the workflow saved on the project, and always asks first.
 - **Uptime monitors:** background checks with history and uptime percentages, refusing private addresses.
 - **Server health:** an optional agent reports disk, memory, load and container status to an admin-only panel.
 - **Dev toolbox:** JSON, JWT, Base64, URL encoding, timestamps, UUIDs, hashes and regex, all in the browser.

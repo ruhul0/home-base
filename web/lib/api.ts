@@ -103,6 +103,8 @@ export const api = {
     stopTimer: () => request("/api/dev/time/stop", "POST"),
     deleteTimeEntry: (id: number) => request(`/api/dev/time/${id}`, "DELETE"),
     workLog: (from: Date, to: Date) => request<{ log: WorkLog; entries: TimeEntry[] }>(`/api/dev/worklog?${timeRange(from, to)}`),
+    deploy: (id: string) => request(`/api/dev/projects/${encodeURIComponent(id)}/deploy`, "POST"),
+    workflows: (repo: string) => request<{ workflows: { name: string; file: string }[] }>(`/api/dev/github/workflows?repo=${encodeURIComponent(repo)}`),
     rerun: (repo: string, runId: number) => request("/api/dev/github/rerun", "POST", { repo, runId }),
   },
   sessions: {

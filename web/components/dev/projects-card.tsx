@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BriefcaseIcon, FileTextIcon, GitBranchIcon, FlaskConicalIcon, PencilIcon, PlayIcon, PlusIcon, RotateCwIcon, SquareIcon, TerminalIcon } from "lucide-react";
+import { BriefcaseIcon, FileTextIcon, GitBranchIcon, FlaskConicalIcon, PencilIcon, PlayIcon, PlusIcon, RocketIcon, RotateCwIcon, SquareIcon, TerminalIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { daysUntil, expirySeverity } from "@/lib/attention";
+import { api } from "@/lib/api";
 import { copyText } from "@/lib/commands";
 import { normalizeUrl } from "@/lib/links";
 import type { Project, ProjectStatus, Workspace } from "@/lib/types";
@@ -39,10 +40,20 @@ function ProjectDialog({ project, onSave, onDelete, onClose }: { project: Projec
   const [form, setForm] = useState(project);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [workflows, setWorkflows] = useState<{ name: string; file: string }[]>([]);
   const field = (key: keyof Project) => ({
-    value: form[key],
+    value: form[key] ?? "",
     onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setForm({ ...form, [key]: event.target.value }),
   });
+
+  function loadWorkflows() {
+    const repo = cleanRepo(form.repo);
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return;
+    api.dev
+      .workflows(repo)
+      .then((result) => setWorkflows(result.workflows))
+      .catch(() => setWorkflows([]));
+  }
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -53,7 +64,10 @@ function ProjectDialog({ project, onSave, onDelete, onClose }: { project: Projec
     if (!url) return setError("Enter the production address, like example.com.");
     if (staging === null) return setError("That staging address isn't valid.");
     if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) return setError("Enter the repository as owner/name.");
-    onSave({ ...form, id: form.id || crypto.randomUUID(), name: form.name.trim(), url, staging, repo, ssh: form.ssh.trim() });
+    const deployWorkflow = (form.deployWorkflow ?? "").trim();
+    if (deployWorkflow && !repo) return setError("A deploy workflow needs a repository.");
+    if (deployWorkflow && !/^[\w.-]+\.ya?ml$/.test(deployWorkflow)) return setError("Enter the workflow's file name, like deploy.yml.");
+    onSave({ ...form, id: form.id || crypto.randomUUID(), name: form.name.trim(), url, staging, repo, ssh: form.ssh.trim(), deployWorkflow, deployRef: deployWorkflow ? (form.deployRef ?? "").trim() || "main" : "" });
   }
 
   return (
@@ -78,6 +92,24 @@ function ProjectDialog({ project, onSave, onDelete, onClose }: { project: Projec
           <div className="grid gap-1.5">
             <Label htmlFor="project-repo">GitHub repository (optional)</Label>
             <Input id="project-repo" className="font-mono" placeholder="owner/name" {...field("repo")} />
+          </div>
+          <div className="grid grid-cols-[2fr_1fr] gap-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="project-deploy">Deploy workflow (optional)</Label>
+              <Input id="project-deploy" className="font-mono" list="project-workflows" placeholder="deploy.yml" onFocus={loadWorkflows} {...field("deployWorkflow")} />
+              <datalist id="project-workflows">
+                {workflows.map((workflow) => (
+                  <option key={workflow.file} value={workflow.file}>
+                    {workflow.name}
+                  </option>
+                ))}
+              </datalist>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="project-deploy-ref">Branch</Label>
+              <Input id="project-deploy-ref" className="font-mono" placeholder="main" maxLength={100} {...field("deployRef")} />
+            </div>
+            <p className="col-span-2 text-xs opacity-70">Needs a workflow_dispatch trigger, and the Actions read and write permission on your GitHub App. You&apos;re always asked before it runs.</p>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="project-ssh">SSH command (optional)</Label>
@@ -115,6 +147,7 @@ export function ProjectsCard({
   onRefresh,
   timer,
   onReport,
+  onDeploy,
   onRerun,
 }: {
   workspace: Workspace | null;
@@ -124,6 +157,7 @@ export function ProjectsCard({
   onRefresh: () => void;
   timer: Timer;
   onReport: (project: Project) => void;
+  onDeploy: (project: Project) => void;
   onRerun: (repo: string, runId: number) => void;
 }) {
   const [editing, setEditing] = useState<Project | null>(null);
@@ -192,6 +226,11 @@ export function ProjectsCard({
                     <Button variant="ghost" size="sm" onClick={() => onReport(project)}>
                       <FileTextIcon /> Report
                     </Button>
+                    {project.repo && project.deployWorkflow && (
+                      <Button variant="ghost" size="sm" title={`${project.deployWorkflow} on ${project.deployRef || "main"}`} onClick={() => onDeploy(project)}>
+                        <RocketIcon /> Deploy
+                      </Button>
+                    )}
                     {project.staging && (
                       <Button variant="ghost" size="sm" render={<a href={project.staging} />}>
                         <FlaskConicalIcon /> Staging

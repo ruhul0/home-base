@@ -179,6 +179,8 @@ export interface Project {
   repo: string;
   ssh: string;
   notes: string;
+  deployWorkflow?: string;
+  deployRef?: string;
 }
 
 export interface SavedCommand {

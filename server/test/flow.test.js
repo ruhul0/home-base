@@ -692,6 +692,9 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
     ['script staging address', { projects: [{ ...siteProject, staging: 'javascript:alert(1)' }] }],
     ['bad project id', { projects: [{ ...siteProject, id: '<script>' }] }],
     ['bad repo name', { projects: [{ ...siteProject, repo: '../../etc' }] }],
+    ['bad deploy workflow', { projects: [{ ...siteProject, deployWorkflow: '../../evil.yml' }] }],
+    ['bad deploy branch', { projects: [{ ...siteProject, deployWorkflow: 'deploy.yml', deployRef: 'main..evil' }] }],
+    ['a deploy workflow without a repo', { projects: [{ ...siteProject, repo: '', deployWorkflow: 'deploy.yml' }] }],
     ['too many projects', { projects: new Array(51).fill(siteProject) }],
     ['oversized command', { commands: [{ ...saveCommand, command: 'x'.repeat(2001) }] }],
     ['empty command', { commands: [{ ...saveCommand, command: ' ' }] }],
@@ -772,6 +775,24 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall('/dev/projects/site-1/report?month=2026-09', { token: dev.alice });
   check('a month with no checks reports no uptime', r.status === 200 && r.data.uptime === null, JSON.stringify(r.data).slice(0, 200));
 
+  r = await apiCall('/dev/projects/site-1/deploy', { method: 'POST' });
+  check('deploying needs sign-in', r.status === 401, r.status);
+  r = await apiCall('/dev/projects/site-1/deploy', { token: dev.alice, method: 'POST' });
+  check('deploying needs a chosen workflow', r.status === 400, r.status);
+  const setDeploy = async (deployWorkflow, deployRef) => {
+    const current = (await apiCall('/dev/workspace', { token: dev.alice })).data;
+    return apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: { ...current, projects: [{ ...siteProject, deployWorkflow, deployRef }] } });
+  };
+  r = await setDeploy('deploy.yml', 'release/1.0');
+  check('a deploy workflow saves', r.status === 200, JSON.stringify(r.data));
+  r = await apiCall('/dev/projects/site-1/deploy', { token: dev.alice, method: 'POST' });
+  check('deploying needs a GitHub connection', r.status === 409, r.status);
+  r = await apiCall('/dev/projects/site-1/deploy', { token: dev.owner, method: 'POST' });
+  check("users can't deploy someone else's project", r.status === 404, r.status);
+  r = await apiCall('/dev/github/workflows?repo=alice/app', { token: dev.alice });
+  check('workflows list only active workflow files', r.status === 200 && r.data.workflows.length === 1 && r.data.workflows[0].file === 'deploy.yml', JSON.stringify(r.data));
+  r = await apiCall('/dev/github/workflows?repo=../../evil', { token: dev.alice });
+  check('a bad repo is refused for workflows', r.status === 400, r.status);
   r = await apiCall('/dev/github/rerun', { token: dev.alice, method: 'POST', body: { repo: 'alice/app', runId: 1 } });
   check('re-running CI needs a GitHub connection', r.status === 409, r.status);
   r = await apiCall('/dev/github/rerun', { method: 'POST', body: { repo: 'alice/app', runId: 1 } });
@@ -787,6 +808,19 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   const rerunsBefore = (await fakeGitHub('/__test/reruns')).reruns;
   r = await apiCall('/dev/github/rerun', { token: dev.alice, method: 'POST', body: { repo: 'alice/app', runId: 1 } });
   check('failed CI can be re-run', r.status === 200 && (await fakeGitHub('/__test/reruns')).reruns === rerunsBefore + 1, JSON.stringify(r.data));
+  r = await apiCall('/dev/projects/site-1/deploy', { token: dev.alice, method: 'POST', body: { repo: 'evil/repo', workflow: 'evil.yml', ref: 'evil' } });
+  const sentDeploys = (await fakeGitHub('/__test/deploys')).deploys;
+  check('a deploy runs the saved workflow and branch, whatever the request says', r.status === 200 && sentDeploys.length === 1 && sentDeploys[0].workflow === 'deploy.yml' && sentDeploys[0].ref === 'release/1.0', JSON.stringify(sentDeploys));
+  await setDeploy('denied.yml', '');
+  r = await apiCall('/dev/projects/site-1/deploy', { token: dev.alice, method: 'POST' });
+  check('a missing deploy permission is explained', r.status === 403 && r.data.error.includes('read and write'), JSON.stringify(r.data));
+  await setDeploy('manual-off.yml', '');
+  r = await apiCall('/dev/projects/site-1/deploy', { token: dev.alice, method: 'POST' });
+  check('a workflow without a manual trigger is explained', r.status === 400 && r.data.error.includes('workflow_dispatch'), JSON.stringify(r.data));
+  await setDeploy('deploy.yml', '');
+  r = await apiCall('/dev/projects/site-1/deploy', { token: dev.alice, method: 'POST' });
+  const lastDeploy = (await fakeGitHub('/__test/deploys')).deploys.at(-1);
+  check('deploys default to main', r.status === 200 && lastDeploy.ref === 'main', JSON.stringify(lastDeploy));
   await apiCall('/dev/github/connection', { token: dev.alice, method: 'DELETE' });
 
   let limited = false;
