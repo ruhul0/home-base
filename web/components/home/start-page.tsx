@@ -6,6 +6,7 @@ import { ClocksCard } from "@/components/dev/clocks-card";
 import { CommandPalette, type PaletteAction } from "@/components/dev/command-palette";
 import { GitHubCard } from "@/components/dev/github-card";
 import { NewsCard } from "@/components/dev/news-card";
+import { ServersCard } from "@/components/dev/servers-card";
 import { ShortcutsDialog } from "@/components/dev/shortcuts-dialog";
 import { ToolboxDialog } from "@/components/dev/toolbox-dialog";
 import { WorkspaceCards } from "@/components/dev/workspace-cards";
@@ -363,6 +364,12 @@ export function StartPage() {
     if (!isExtension()) location.replace("/");
   }
 
+  async function accountDeleted() {
+    await storage.set(KEYS.autoLogin, false);
+    await showSignedOut();
+    if (!isExtension()) location.replace("/");
+  }
+
   function dismissPrompt() {
     localStorage.setItem(KEYS.promptDismissed, "1");
     setPromptVisible(false);
@@ -479,6 +486,7 @@ export function StartPage() {
             {(preferences.showGitHub || preferences.showNews || preferences.showMonitors || preferences.showTodos || preferences.showNotes || preferences.showClocks) && (
               <section className="home-widgets mt-5" aria-label="Developer panels">
                 {preferences.showClocks && <ClocksCard />}
+                {user?.isAdmin && preferences.showServers && <ServersCard onSignedOut={signedOutElsewhere} />}
                 {preferences.showGitHub && <GitHubCard onSignedOut={signedOutElsewhere} />}
                 <WorkspaceCards preferences={preferences} onSignedOut={signedOutElsewhere} />
                 {preferences.showNews && <NewsCard onSignedOut={signedOutElsewhere} />}
@@ -529,6 +537,9 @@ export function StartPage() {
           onUploadImage={uploadImage}
           onRemoveImage={removeImage}
           onClose={() => setCustomizing(false)}
+          login={user?.login ?? ""}
+          isAdmin={Boolean(user?.isAdmin)}
+          onAccountDeleted={() => void accountDeleted()}
         />
       )}
     </div>

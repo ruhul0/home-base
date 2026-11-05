@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isExtension } from "@/lib/browser";
+import { AccountPanel } from "./account-panel";
 import { DAISY_THEMES, LOOKS, resolveThemeChoice } from "@/lib/preferences";
 import type { Preferences } from "@/lib/types";
 
@@ -100,7 +101,13 @@ export function CustomizePanel({
   onUploadImage,
   onRemoveImage,
   onClose,
+  login,
+  isAdmin,
+  onAccountDeleted,
 }: {
+  login: string;
+  isAdmin: boolean;
+  onAccountDeleted: () => void;
   preferences: Preferences;
   accentPreview: string;
   onSet: SetPreference;
@@ -125,11 +132,12 @@ export function CustomizePanel({
       <Separator />
 
       <Tabs defaultValue="style" className="min-h-0 flex-1 gap-0">
-        <TabsList className="mx-4 mt-3 grid grid-cols-4">
+        <TabsList className="mx-4 mt-3 grid grid-cols-5">
           <TabsTrigger value="style">Style</TabsTrigger>
           <TabsTrigger value="background">Backdrop</TabsTrigger>
           <TabsTrigger value="layout">Layout</TabsTrigger>
           <TabsTrigger value="page">Page</TabsTrigger>
+          <TabsTrigger value="account">Account</TabsTrigger>
         </TabsList>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-8">
@@ -210,6 +218,10 @@ export function CustomizePanel({
             <ChoiceField label="Clock and search position" value={preferences.heroAlign} choices={{ center: "Centre", left: "Left" }} onChange={(value) => onSet("heroAlign", value as Preferences["heroAlign"])} />
           </TabsContent>
 
+          <TabsContent value="account">
+            <AccountPanel login={login} isAdmin={isAdmin} onDeleted={onAccountDeleted} />
+          </TabsContent>
+
           <TabsContent value="page" className="grid gap-5">
             <div className="grid gap-3">
               <SwitchField label="Show clock" checked={preferences.showClock} onChange={(value) => onSet("showClock", value)} />
@@ -237,6 +249,7 @@ export function CustomizePanel({
               <SwitchField label="Scratchpad" checked={preferences.showNotes} onChange={(value) => onSet("showNotes", value)} />
               <SwitchField label="Hacker News" checked={preferences.showNews} onChange={(value) => onSet("showNews", value)} />
               <SwitchField label="Time and Unix clock" checked={preferences.showClocks} onChange={(value) => onSet("showClocks", value)} />
+              {isAdmin && <SwitchField label="Servers" checked={preferences.showServers} onChange={(value) => onSet("showServers", value)} />}
             </div>
 
             <Separator />

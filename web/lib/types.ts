@@ -56,6 +56,7 @@ export interface Preferences {
   showTodos: boolean;
   showNotes: boolean;
   showClocks: boolean;
+  showServers: boolean;
 }
 
 export interface GitHubItem {
@@ -73,6 +74,8 @@ export interface GitHubDashboard {
   followers: number;
   following: number;
   reviewRequests: GitHubItem[];
+  ci: { repo: string; workflow: string; branch: string; status: string; conclusion: string; url: string; updatedAt: string }[];
+  ciNeedsPermission: boolean;
   repos: { private: boolean; name: string; url: string; description: string; language: string; stars: number; pushedAt: string }[];
   pullRequests: GitHubItem[];
   issues: GitHubItem[];
@@ -109,6 +112,37 @@ export interface MonitorResult extends Monitor {
   ms: number;
   problem?: string;
   checkedAt: string;
+  history?: {
+    points: { at: string; up: boolean; ms: number }[];
+    uptime24h: number | null;
+    downSince: string | null;
+  };
+}
+
+export interface ServerReport {
+  diskPercent: number;
+  memoryPercent: number;
+  load: number;
+  cores: number;
+  uptimeSeconds: number;
+  containersRunning: number;
+  containersTotal: number;
+  unhealthy: string[];
+}
+
+export interface MonitoredServer {
+  id: number;
+  name: string;
+  report: ServerReport | null;
+  reportedAt: string | null;
+}
+
+export interface SessionInfo {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  current: boolean;
 }
 
 export interface Todo {
@@ -117,6 +151,7 @@ export interface Todo {
 }
 
 export interface Workspace {
+  version: number;
   monitors: Monitor[];
   todos: Todo[];
   notes: string;

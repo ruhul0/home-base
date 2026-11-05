@@ -134,6 +134,16 @@ func (a *App) registerDevRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/dev/workspace", a.signedIn(a.handleGetWorkspace))
 	mux.HandleFunc("PUT /api/dev/workspace", a.signedIn(a.handlePutWorkspace))
 	mux.HandleFunc("GET /api/dev/monitors", a.signedIn(a.handleDevMonitors))
+
+	mux.HandleFunc("GET /api/admin/servers", a.adminOnly(a.handleAdminServers))
+	mux.HandleFunc("POST /api/admin/servers", a.adminOnly(a.handleAdminAddServer))
+	mux.HandleFunc("DELETE /api/admin/servers/{id}", a.adminOnly(a.handleAdminDeleteServer))
+	mux.HandleFunc("POST /api/server-report", noStore(a.handleServerReport))
+
+	mux.HandleFunc("GET /api/sessions", a.signedIn(a.handleListSessions))
+	mux.HandleFunc("DELETE /api/sessions/{id}", a.signedIn(a.handleDeleteSession))
+	mux.HandleFunc("POST /api/sessions/sign-out-others", a.signedIn(a.handleSignOutOthers))
+	mux.HandleFunc("DELETE /api/account", a.signedIn(a.handleDeleteAccount))
 }
 
 // GitHubRepo is one of the user's recently updated public repositories.
@@ -156,6 +166,65 @@ type GitHubItem struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// GitHubRun is the latest CI run of a repository.
+type GitHubRun struct {
+	Repo       string `json:"repo"`
+	Workflow   string `json:"workflow"`
+	Branch     string `json:"branch"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	URL        string `json:"url"`
+	UpdatedAt  string `json:"updatedAt"`
+}
+
+// latestRuns reads each repository's newest workflow run. It returns true if any repository
+// refused, which for a connected user usually means the app is missing the Actions permission.
+func latestRuns(ctx context.Context, token string, repos []GitHubRepo) ([]GitHubRun, bool) {
+	var (
+		mutex  sync.Mutex
+		group  sync.WaitGroup
+		runs   = []GitHubRun{}
+		failed bool
+	)
+	for _, repo := range repos {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			owner, name, ok := strings.Cut(repo.Name, "/")
+			if !ok {
+				return
+			}
+			var found struct {
+				WorkflowRuns []struct {
+					Name       string `json:"name"`
+					HeadBranch string `json:"head_branch"`
+					Status     string `json:"status"`
+					Conclusion string `json:"conclusion"`
+					HTMLURL    string `json:"html_url"`
+					UpdatedAt  string `json:"updated_at"`
+				} `json:"workflow_runs"`
+			}
+			err := githubGetAs(ctx, token, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/actions/runs?per_page=1", &found)
+			mutex.Lock()
+			defer mutex.Unlock()
+			if err != nil {
+				failed = true
+				return
+			}
+			if len(found.WorkflowRuns) == 0 {
+				return
+			}
+			run := found.WorkflowRuns[0]
+			if link := safeLink(run.HTMLURL); link != "" {
+				runs = append(runs, GitHubRun{Repo: repo.Name, Workflow: run.Name, Branch: run.HeadBranch, Status: run.Status, Conclusion: run.Conclusion, URL: link, UpdatedAt: run.UpdatedAt})
+			}
+		}()
+	}
+	group.Wait()
+	sort.Slice(runs, func(left, right int) bool { return runs[left].UpdatedAt > runs[right].UpdatedAt })
+	return runs, failed
+}
+
 // GitHubEvent is one entry in the user's public activity.
 type GitHubEvent struct {
 	Type      string `json:"type"`
@@ -165,18 +234,20 @@ type GitHubEvent struct {
 
 // GitHubDashboard is what the GitHub panel shows. Partial is true if some sections couldn't be loaded.
 type GitHubDashboard struct {
-	Login           string        `json:"login"`
-	Name            string        `json:"name"`
-	PublicRepos     int           `json:"publicRepos"`
-	Followers       int           `json:"followers"`
-	Following       int           `json:"following"`
-	Repos           []GitHubRepo  `json:"repos"`
-	PullRequests    []GitHubItem  `json:"pullRequests"`
-	Issues          []GitHubItem  `json:"issues"`
-	Events          []GitHubEvent `json:"events"`
-	Partial         bool          `json:"partial"`
-	ReviewRequests  []GitHubItem  `json:"reviewRequests"`
-	FromRecentRepos bool          `json:"fromRecentRepos"`
+	Login             string        `json:"login"`
+	Name              string        `json:"name"`
+	PublicRepos       int           `json:"publicRepos"`
+	Followers         int           `json:"followers"`
+	Following         int           `json:"following"`
+	Repos             []GitHubRepo  `json:"repos"`
+	PullRequests      []GitHubItem  `json:"pullRequests"`
+	Issues            []GitHubItem  `json:"issues"`
+	Events            []GitHubEvent `json:"events"`
+	Partial           bool          `json:"partial"`
+	ReviewRequests    []GitHubItem  `json:"reviewRequests"`
+	CI                []GitHubRun   `json:"ci"`
+	CINeedsPermission bool          `json:"ciNeedsPermission"`
+	FromRecentRepos   bool          `json:"fromRecentRepos"`
 }
 
 // githubGetAs reads as the given user if a token is provided. Otherwise it reads public data, using
@@ -310,7 +381,7 @@ func openItemsFromRepos(ctx context.Context, token, login string, repos []GitHub
 // repositories they've installed the app on. Without one, it reads public data only.
 func fetchGitHubDashboard(ctx context.Context, login, token string) (GitHubDashboard, error) {
 	escaped := url.PathEscape(login)
-	dashboard := GitHubDashboard{Login: login, Repos: []GitHubRepo{}, PullRequests: []GitHubItem{}, Issues: []GitHubItem{}, ReviewRequests: []GitHubItem{}, Events: []GitHubEvent{}}
+	dashboard := GitHubDashboard{Login: login, Repos: []GitHubRepo{}, PullRequests: []GitHubItem{}, Issues: []GitHubItem{}, ReviewRequests: []GitHubItem{}, CI: []GitHubRun{}, Events: []GitHubEvent{}}
 
 	var profile struct {
 		Name        string `json:"name"`
@@ -383,6 +454,10 @@ func fetchGitHubDashboard(ctx context.Context, login, token string) (GitHubDashb
 		} `json:"repo"`
 		CreatedAt string `json:"created_at"`
 	}
+	var ciFailed bool
+	dashboard.CI, ciFailed = latestRuns(ctx, token, dashboard.Repos)
+	dashboard.CINeedsPermission = ciFailed && token != "" && len(dashboard.CI) == 0
+
 	eventsPath := "/users/" + escaped + "/events/public?per_page=8"
 	if token != "" {
 		eventsPath = "/users/" + escaped + "/events?per_page=8"
@@ -494,13 +569,14 @@ type Todo struct {
 
 // Workspace is the user's own notes, todos and monitors.
 type Workspace struct {
+	Version  int       `json:"version"`
 	Monitors []Monitor `json:"monitors"`
 	Todos    []Todo    `json:"todos"`
 	Notes    string    `json:"notes"`
 }
 
 func cleanWorkspace(input Workspace) (Workspace, bool) {
-	cleaned := Workspace{Monitors: []Monitor{}, Todos: []Todo{}, Notes: input.Notes}
+	cleaned := Workspace{Version: input.Version, Monitors: []Monitor{}, Todos: []Todo{}, Notes: input.Notes}
 	if len(input.Monitors) > maxMonitors || len(input.Todos) > maxTodos || utf8.RuneCountInString(input.Notes) > maxNotesLength {
 		return cleaned, false
 	}
@@ -525,7 +601,8 @@ func cleanWorkspace(input Workspace) (Workspace, bool) {
 func (s *Store) getWorkspace(ctx context.Context, userID int64) (Workspace, error) {
 	workspace := Workspace{Monitors: []Monitor{}, Todos: []Todo{}}
 	var data string
-	err := s.db.QueryRowContext(ctx, "SELECT data FROM user_workspaces WHERE user_id = ?", userID).Scan(&data)
+	var version int
+	err := s.db.QueryRowContext(ctx, "SELECT data, version FROM user_workspaces WHERE user_id = ?", userID).Scan(&data, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return workspace, nil
 	}
@@ -533,18 +610,35 @@ func (s *Store) getWorkspace(ctx context.Context, userID int64) (Workspace, erro
 		return workspace, err
 	}
 	err = json.Unmarshal([]byte(data), &workspace)
+	workspace.Version = version
 	return workspace, err
 }
 
-func (s *Store) setWorkspace(ctx context.Context, userID int64, workspace Workspace) error {
+// setWorkspace only saves if the client edited the latest version. It returns false if another
+// device saved first, so the client can merge instead of overwriting those changes.
+func (s *Store) setWorkspace(ctx context.Context, userID int64, workspace Workspace) (int, bool, error) {
 	data, err := json.Marshal(workspace)
 	if err != nil {
-		return err
+		return 0, false, err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO user_workspaces (user_id, data) VALUES (?, ?)
-		 ON DUPLICATE KEY UPDATE data = VALUES(data)`, userID, string(data))
-	return err
+	next := workspace.Version + 1
+	saved := false
+	err = s.inTransaction(ctx, func(tx *sql.Tx) error {
+		var current int
+		err := tx.QueryRowContext(ctx, "SELECT version FROM user_workspaces WHERE user_id = ? FOR UPDATE", userID).Scan(&current)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if current != workspace.Version {
+			return nil
+		}
+		saved = true
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO user_workspaces (user_id, data, version) VALUES (?, ?, ?)
+			 ON DUPLICATE KEY UPDATE data = VALUES(data), version = VALUES(version)`, userID, string(data), next)
+		return err
+	})
+	return next, saved, err
 }
 
 func (a *App) handleGetWorkspace(w http.ResponseWriter, r *http.Request, current session) {
@@ -567,11 +661,16 @@ func (a *App) handlePutWorkspace(w http.ResponseWriter, r *http.Request, current
 		writeError(w, http.StatusBadRequest, invalid)
 		return
 	}
-	if err := a.store.setWorkspace(r.Context(), current.userID, workspace); err != nil {
+	version, saved, err := a.store.setWorkspace(r.Context(), current.userID, workspace)
+	if err != nil {
 		writeServerError(w, err)
 		return
 	}
-	writeOK(w)
+	if !saved {
+		writeError(w, http.StatusConflict, "Your workspace changed on another device.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"version": version})
 }
 
 var carrierNAT = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
@@ -629,13 +728,14 @@ var errBlockedAddress = errors.New("private or non-web address")
 
 // MonitorResult is one check of a monitored address.
 type MonitorResult struct {
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	Up        bool   `json:"up"`
-	Status    int    `json:"status"`
-	Ms        int64  `json:"ms"`
-	Problem   string `json:"problem,omitempty"`
-	CheckedAt string `json:"checkedAt"`
+	Name      string          `json:"name"`
+	URL       string          `json:"url"`
+	Up        bool            `json:"up"`
+	Status    int             `json:"status"`
+	Ms        int64           `json:"ms"`
+	Problem   string          `json:"problem,omitempty"`
+	CheckedAt string          `json:"checkedAt"`
+	History   *MonitorHistory `json:"history,omitempty"`
 }
 
 func (d *DevServices) check(ctx context.Context, address string) MonitorResult {
@@ -688,6 +788,11 @@ func (a *App) handleDevMonitors(w http.ResponseWriter, r *http.Request, current 
 				return a.dev.check(context.WithoutCancel(r.Context()), monitor.URL), nil
 			})
 			result.Name = monitor.Name
+			if history, err := a.store.monitorHistory(context.WithoutCancel(r.Context()), monitor.URL); err == nil {
+				result.History = &history
+			} else {
+				log.Printf("reading monitor history failed: %v", err)
+			}
 			results[index] = result
 		}()
 	}

@@ -13,7 +13,8 @@ export default function PrivacyPage() {
         <li>Your GitHub user ID and username, which identify your account.</li>
         <li>The groups and sites you save, your design choices and any background or icon images you upload, so they appear on your devices.</li>
         <li>Your todos, scratchpad and the addresses you choose to monitor.</li>
-        <li>A protected record of each signed-in session, kept for up to a year or until you sign out.</li>
+        <li>Up to 7 days of check results for the addresses you monitor.</li>
+        <li>A protected record of each signed-in device, including its browser type, kept until you sign out or for 90 days after it was last used.</li>
       </ul>
 
       <h2>What our server requests for you</h2>
@@ -48,7 +49,7 @@ export default function PrivacyPage() {
 
       <h2>Removing your data</h2>
       <p>
-        You can edit or remove your saved sites at any time. To delete your account completely, <a href="https://github.com/ruhul0/home-base/issues">open an issue on GitHub</a> or contact <a href="https://github.com/ruhul0">@ruhul0</a>.
+        You can edit or remove your saved sites at any time. You can sign out other devices or permanently delete your account yourself, under Customize and then Account. This deletes everything listed above, except that database backups are kept for a limited time before being replaced.
       </p>
     </main>
   );

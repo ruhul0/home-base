@@ -37,6 +37,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   showTodos: true,
   showNotes: true,
   showClocks: true,
+  showServers: true,
 };
 
 export const DAISY_THEMES = [

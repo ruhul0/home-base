@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	sessionDays              = 365
+	sessionDays              = 90
+	sessionTouchInterval     = "1 HOUR"
 	migrationLock            = "home-base-migration"
 	migrationLockWaitSeconds = 60
 )
@@ -53,6 +54,24 @@ var schema = []string{
 	   connected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	   CONSTRAINT user_github_tokens_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 	 )`,
+	`CREATE TABLE IF NOT EXISTS monitor_checks (
+	   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+	   url_hash CHAR(64) NOT NULL,
+	   checked_at DATETIME NOT NULL,
+	   up TINYINT(1) NOT NULL,
+	   status INT NOT NULL,
+	   ms INT NOT NULL,
+	   INDEX monitor_checks_lookup (url_hash, checked_at),
+	   INDEX monitor_checks_age (checked_at)
+	 )`,
+	`CREATE TABLE IF NOT EXISTS servers (
+	   id INT AUTO_INCREMENT PRIMARY KEY,
+	   name VARCHAR(100) NOT NULL,
+	   token_hash CHAR(64) NOT NULL UNIQUE,
+	   report TEXT NULL,
+	   reported_at DATETIME NULL,
+	   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	 ) CHARACTER SET utf8mb4`,
 	`CREATE TABLE IF NOT EXISTS sessions (
 	   token_hash CHAR(64) PRIMARY KEY,
 	   user_id INT NOT NULL,
@@ -209,6 +228,9 @@ func (s *Store) applyMigrations(ctx context.Context) error {
 		{"link_groups", "color", "VARCHAR(7) NOT NULL DEFAULT ''"},
 		{"links", "icon", "TEXT NULL"},
 		{"links", "icon_color", "VARCHAR(7) NOT NULL DEFAULT ''"},
+		{"sessions", "label", "VARCHAR(200) NOT NULL DEFAULT ''"},
+		{"sessions", "last_used_at", "DATETIME NULL"},
+		{"user_workspaces", "version", "INT NOT NULL DEFAULT 0"},
 	}
 	for _, column := range newColumns {
 		exists, err := s.columnExists(ctx, column.table, column.name)
@@ -488,7 +510,7 @@ func hashToken(token string) string {
 }
 
 // createSession stores only a hash of the token, so reading the database doesn't reveal usable sessions.
-func (s *Store) createSession(ctx context.Context, userID int64) (string, error) {
+func (s *Store) createSession(ctx context.Context, userID int64, label string) (string, error) {
 	token, err := randomHex(32)
 	if err != nil {
 		return "", err
@@ -497,8 +519,8 @@ func (s *Store) createSession(ctx context.Context, userID int64) (string, error)
 		return "", err
 	}
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, NOW() + INTERVAL ? DAY)",
-		hashToken(token), userID, sessionDays)
+		"INSERT INTO sessions (token_hash, user_id, label, last_used_at, expires_at) VALUES (?, ?, ?, NOW(), NOW() + INTERVAL ? DAY)",
+		hashToken(token), userID, label, sessionDays)
 	return token, err
 }
 
@@ -513,6 +535,13 @@ func (s *Store) findSessionUser(ctx context.Context, token string) (int64, error
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
+	if err != nil {
+		return 0, err
+	}
+	// Sessions in regular use keep going, and unused ones expire. This writes at most once an hour.
+	_, err = s.db.ExecContext(ctx,
+		"UPDATE sessions SET last_used_at = NOW(), expires_at = NOW() + INTERVAL ? DAY WHERE token_hash = ? AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL "+sessionTouchInterval+")",
+		sessionDays, hashToken(token))
 	return userID, err
 }
 

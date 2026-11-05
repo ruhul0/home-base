@@ -44,6 +44,9 @@ jobs:
           for file in server/test/*.js; do node --check "$file"; done
           for file in deploy/*.sh; do bash -n "$file"; done
 
+      - name: Test the deploy script and its rollback
+        run: bash deploy/test-deploy.sh
+
       - name: Build the extension package
         working-directory: web
         run: |

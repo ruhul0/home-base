@@ -26,7 +26,6 @@ if [ -z "$encryption_key" ]; then
 fi
 
 umask 077
-cp .env ".env.bak.$(date +%F-%H%M%S)"
 grep -vE '^(GITHUB_APP_(SLUG|CLIENT_ID|CLIENT_SECRET)|TOKEN_ENCRYPTION_KEY)=' .env > .env.new || true
 {
   printf 'GITHUB_APP_SLUG=%s\n' "$app_slug"

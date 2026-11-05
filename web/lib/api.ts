@@ -5,9 +5,11 @@ import type {
   GitHubResponse,
   Group,
   GroupsResponse,
+  MonitoredServer,
   MonitorResult,
   NewsStory,
   Preferences,
+  SessionInfo,
   Workspace,
 } from "./types";
 
@@ -57,7 +59,7 @@ export const api = {
   logout: () => request("/api/logout", "POST"),
   config: () => request<{ extensionUrl: string | null }>("/api/config"),
   getGroups: () => request<GroupsResponse>("/api/groups"),
-  putGroups: (groups: Group[]) => request("/api/groups", "PUT", { groups }),
+  putGroups: (groups: Group[]) => request("/api/groups", "PUT", { groups, schema: 2 }),
   resetGroups: () => request<{ groups: Group[] }>("/api/groups/reset", "POST"),
   putPreferences: (preferences: Preferences) => request("/api/preferences", "PUT", { preferences }),
   deleteBackground: () => request("/api/background", "DELETE"),
@@ -81,10 +83,19 @@ export const api = {
     disconnectGitHub: () => request("/api/dev/github/connection", "DELETE"),
     news: () => request<{ stories: NewsStory[]; fetchedAt: string }>("/api/dev/news"),
     workspace: () => request<Workspace>("/api/dev/workspace"),
-    putWorkspace: (workspace: Workspace) => request("/api/dev/workspace", "PUT", workspace),
+    putWorkspace: (workspace: Workspace) => request<{ version: number }>("/api/dev/workspace", "PUT", workspace),
     monitors: () => request<{ results: MonitorResult[] }>("/api/dev/monitors"),
   },
+  sessions: {
+    list: () => request<{ sessions: SessionInfo[] }>("/api/sessions"),
+    remove: (id: string) => request(`/api/sessions/${id}`, "DELETE"),
+    signOutOthers: () => request("/api/sessions/sign-out-others", "POST"),
+  },
+  deleteAccount: (confirm: string) => request("/api/account", "DELETE", { confirm }),
   admin: {
+    servers: () => request<{ servers: MonitoredServer[]; serverTime: string }>("/api/admin/servers"),
+    addServer: (name: string) => request<{ id: number; token: string }>("/api/admin/servers", "POST", { name }),
+    deleteServer: (id: number) => request(`/api/admin/servers/${id}`, "DELETE"),
     overview: () =>
       request<{ totals: AdminTotals; users: AdminUser[]; currentUserId: number }>("/api/admin/overview"),
     signOut: (id: number) => request(`/api/admin/users/${id}/sign-out`, "POST"),

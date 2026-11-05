@@ -43,9 +43,12 @@ func run() error {
 		return fmt.Errorf("upgrade database: %w", err)
 	}
 
+	app := newApp(store, publicDirectory)
+	go app.runMonitorScheduler(ctx)
+
 	server := &http.Server{
 		Addr:              listenAddress,
-		Handler:           newApp(store, publicDirectory).routes(),
+		Handler:           app.routes(),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,

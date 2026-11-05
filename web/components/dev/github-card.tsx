@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BookMarkedIcon, CircleDotIcon, EyeIcon, GitPullRequestIcon, HistoryIcon, LockIcon, ShieldCheckIcon, StarIcon, UsersIcon } from "lucide-react";
+import { BookMarkedIcon, CircleDotIcon, EyeIcon, GitPullRequestIcon, HistoryIcon, LockIcon, ShieldCheckIcon, StarIcon, UsersIcon, WorkflowIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -177,6 +177,34 @@ export function GitHubCard({ onSignedOut }: { onSignedOut: () => void }) {
               <SectionTitle icon={CircleDotIcon}>Open issues</SectionTitle>
               <ItemList items={data.issues} empty={response?.connected ? "No open issues." : "No open public issues."} />
             </div>
+            {(data.ci.length > 0 || data.ciNeedsPermission) && (
+              <div className="md:col-span-2">
+                <SectionTitle icon={WorkflowIcon}>CI status</SectionTitle>
+                {data.ciNeedsPermission && (
+                  <DevMessage>CI status needs the Actions read-only permission. Add it in your GitHub App&apos;s settings, then approve the change on GitHub.</DevMessage>
+                )}
+                <ul className="grid gap-0.5 md:grid-cols-2">
+                  {data.ci.map((run) => {
+                    const running = run.status !== "completed";
+                    const state = running ? "status-warning" : run.conclusion === "success" ? "status-success" : ["skipped", "neutral", "cancelled"].includes(run.conclusion) ? "status-neutral" : "status-error";
+                    const label = running ? run.status.replaceAll("_", " ") : run.conclusion.replaceAll("_", " ");
+                    return (
+                      <li key={run.repo}>
+                        <a href={run.url} className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-base-content/10">
+                          <span className={`status flex-none ${state} ${running ? "animate-pulse" : ""}`} aria-hidden />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-mono text-sm">{run.repo}</span>
+                            <span className="block truncate text-xs opacity-65">
+                              {run.workflow} · {run.branch} · {label} · {timeAgo(run.updatedAt)}
+                            </span>
+                          </span>
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             {response?.connected && (
               <div className="md:col-span-2">
                 <SectionTitle icon={EyeIcon}>Review requests</SectionTitle>

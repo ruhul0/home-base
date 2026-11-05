@@ -129,6 +129,7 @@ http.createServer((req, res) => {
       { title: 'Bad link', html_url: 'javascript:alert(1)', number: 3, updated_at: '2026-11-03T00:00:00Z' },
     ]);
   }
+  if (url.pathname === '/repos/alice/app/actions/runs') return respond({ workflow_runs: [{ name: 'CI', head_branch: 'main', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/alice/app/actions/runs/1', updated_at: '2026-11-01T00:00:00Z' }] });
   if (url.pathname === '/users/alice') return respond({ name: 'Alice', public_repos: 3, followers: 5, following: 2 });
   if (url.pathname === '/users/alice/repos') return respond([{ full_name: 'alice/app', html_url: 'https://github.com/alice/app', description: 'An app', language: 'Go', stargazers_count: 9, pushed_at: '2026-11-01T00:00:00Z' }]);
   if (url.pathname === '/users/alice/events/public') return respond([{ type: 'PushEvent', repo: { name: 'alice/app' }, created_at: '2026-11-01T00:00:00Z' }]);

@@ -9,6 +9,7 @@ const ALLOWLIST = 'http://app-allowlist:3000';
 const ADMIN_EMAIL = 'http://app-admin-email:3000';
 const STORE_LINK = 'http://app-store-link:3000';
 const MONITORS = 'http://app-monitors:3000';
+const RATE_LIMIT = 'http://app-rate-limit:3000';
 let base = MAIN;
 
 let failed = 0;
@@ -78,7 +79,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
 };
 
 (async () => {
-  for (const address of [MAIN, ALLOWLIST, ADMIN_EMAIL, STORE_LINK, MONITORS]) await waitForServer(address);
+  for (const address of [MAIN, ALLOWLIST, ADMIN_EMAIL, STORE_LINK, MONITORS, RATE_LIMIT]) await waitForServer(address);
   const connection = await mysql.createConnection({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -423,6 +424,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall(`/admin/users/${bobRow.id}`, { token: fresh.owner, method: 'DELETE' });
   check('deleting a missing user reported', r.status === 404, r.status);
 
+  const withoutVersion = ({ version, ...rest }) => rest;
   const dev = { alice: (await signIn('code-alice')).token, owner: (await signIn('code-owner-renamed')).token };
   for (const path of ['/dev/github', '/dev/news', '/dev/workspace', '/dev/monitors']) {
     r = await apiCall(path);
@@ -450,7 +452,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   check('news replaces unsafe links with the discussion', r.data.stories[1].url === 'https://news.ycombinator.com/item?id=102', r.data.stories[1]?.url);
 
   r = await apiCall('/dev/workspace', { token: dev.alice });
-  check('workspace starts empty', JSON.stringify(r.data) === JSON.stringify({ monitors: [], todos: [], notes: '' }), JSON.stringify(r.data));
+  check('workspace starts empty', JSON.stringify(withoutVersion(r.data)) === JSON.stringify({ monitors: [], todos: [], notes: '' }), JSON.stringify(r.data));
   const aliceWorkspace = {
     monitors: [{ name: 'Up', url: 'http://fake-github:4000/up' }, { name: 'Down', url: 'http://fake-github:4000/down' }],
     todos: [{ text: 'Ship it', done: false }, { text: 'Done thing', done: true }],
@@ -459,9 +461,13 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: aliceWorkspace });
   check('workspace saves', r.status === 200, JSON.stringify(r.data));
   r = await apiCall('/dev/workspace', { token: dev.alice });
-  check('workspace persists in MySQL', JSON.stringify(r.data) === JSON.stringify(aliceWorkspace), JSON.stringify(r.data));
+  check('workspace persists in MySQL', JSON.stringify(withoutVersion(r.data)) === JSON.stringify(aliceWorkspace) && r.data.version === 1, JSON.stringify(r.data));
+  r = await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: { ...aliceWorkspace, notes: 'stale edit', version: 0 } });
+  check('a stale workspace save is refused', r.status === 409, r.status);
+  r = await apiCall('/dev/workspace', { token: dev.alice });
+  check('a refused save changes nothing', r.data.notes === aliceWorkspace.notes && r.data.version === 1, JSON.stringify(r.data));
   r = await apiCall('/dev/workspace', { token: dev.owner });
-  check("workspaces are private to each user", JSON.stringify(r.data) === JSON.stringify({ monitors: [], todos: [], notes: '' }), JSON.stringify(r.data));
+  check("workspaces are private to each user", JSON.stringify(withoutVersion(r.data)) === JSON.stringify({ monitors: [], todos: [], notes: '' }), JSON.stringify(r.data));
   for (const [label, body] of [
     ['script monitor', { monitors: [{ name: 'x', url: 'javascript:alert(1)' }], todos: [], notes: '' }],
     ['file monitor', { monitors: [{ name: 'x', url: 'file:///etc/passwd' }], todos: [], notes: '' }],
@@ -483,7 +489,94 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   const monitorDown = r.data.results?.find((result) => result.name === 'Down');
   check('monitors report a working site', monitorUp?.up === true && monitorUp.status === 200 && monitorUp.ms >= 0, JSON.stringify(monitorUp));
   check('monitors report a failing site', monitorDown?.up === false && monitorDown.status === 500 && monitorDown.problem === 'Returned HTTP 500.', JSON.stringify(monitorDown));
+  let history;
+  for (let attempt = 0; attempt < 20 && !(history?.up?.points.length && history?.down?.points.length); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    r = await apiCall('/dev/monitors', { token: dev.alice });
+    history = { up: r.data.results.find((result) => result.name === 'Up').history, down: r.data.results.find((result) => result.name === 'Down').history };
+  }
+  check('background checks build history without the page asking', history.up.points.length > 0 && history.down.points.length > 0, JSON.stringify(history));
+  check('history reports uptime', history.up.uptime24h === 100 && history.down.uptime24h === 0, JSON.stringify(history));
+  check('history reports when an outage began', history.up.downSince === null && Boolean(history.down.downSince), JSON.stringify(history));
+  check('a site that is up shows no problem', history.up.points.every((point) => point.up));
   base = MAIN;
+
+  const rateLimitUser = { token: null };
+  base = RATE_LIMIT;
+  rateLimitUser.token = (await signIn('code-alice')).token;
+  const statuses = [];
+  for (let attempt = 0; attempt < 7; attempt += 1) statuses.push((await apiCall('/groups', { token: rateLimitUser.token })).status);
+  check('each user is rate limited', statuses.slice(0, 5).every((status) => status === 200) && statuses[6] === 429, statuses.join(','));
+  r = await apiCall('/groups', { token: (await signIn('code-owner-renamed')).token });
+  check("one user's limit doesn't affect another", r.status === 200, r.status);
+  base = MAIN;
+
+  r = await apiCall('/dev/github', { token: dev.alice });
+  check('CI status shows the latest run', r.data.data.ci[0]?.repo === 'alice/app' && r.data.data.ci[0].conclusion === 'failure' && r.data.data.ci[0].workflow === 'CI', JSON.stringify(r.data.data.ci));
+
+  const styled = [{ name: 'Styled', color: '#ff0000', links: [{ name: 'Site', url: 'https://example.com/', icon: 'emoji:🎵', iconColor: '#00ff00' }] }];
+  r = await apiCall('/groups', { token: dev.alice, method: 'PUT', body: { groups: styled, schema: 2 } });
+  check('new clients save customization', r.status === 200, r.status);
+  r = await apiCall('/groups', { token: dev.alice, method: 'PUT', body: { groups: [{ name: 'Styled', links: [{ name: 'Renamed', url: 'https://example.com/' }] }] } });
+  r = await apiCall('/groups', { token: dev.alice });
+  check('an old client keeps icons and colours', r.data.groups[0].color === '#ff0000' && r.data.groups[0].links[0].icon === 'emoji:🎵' && r.data.groups[0].links[0].iconColor === '#00ff00' && r.data.groups[0].links[0].name === 'Renamed', JSON.stringify(r.data.groups));
+  await apiCall('/groups', { token: dev.alice, method: 'PUT', body: { groups: [{ name: 'Styled', links: [{ name: 'Renamed', url: 'https://example.com/' }] }], schema: 2 } });
+  r = await apiCall('/groups', { token: dev.alice });
+  check('new clients can remove icons and colours', r.data.groups[0].color === undefined && r.data.groups[0].links[0].icon === undefined, JSON.stringify(r.data.groups));
+  await apiCall('/groups/reset', { token: dev.alice, method: 'POST' });
+
+  const secondDevice = (await signIn('code-alice')).token;
+  r = await apiCall('/sessions', { token: dev.alice });
+  const sessionList = r.data.sessions ?? [];
+  check('users can see their sessions', r.status === 200 && sessionList.length >= 2 && sessionList.filter((item) => item.current).length === 1, JSON.stringify(r.data).slice(0, 300));
+  check('session lists contain no tokens', !JSON.stringify(r.data).includes(dev.alice) && sessionList.every((item) => item.id.length === 16));
+  const other = sessionList.find((item) => !item.current);
+  r = await apiCall(`/sessions/${other.id}`, { token: dev.owner, method: 'DELETE' });
+  check("users can't remove someone else's session", r.status === 404, r.status);
+  r = await apiCall('/sessions/sign-out-others', { token: dev.alice, method: 'POST' });
+  check('sign out everywhere else works', r.status === 200, r.status);
+  r = await apiCall('/groups', { token: secondDevice });
+  check('other devices are signed out', r.status === 401, r.status);
+  r = await apiCall('/groups', { token: dev.alice });
+  check('this device stays signed in', r.status === 200, r.status);
+  const removable = (await signIn('code-alice')).token;
+  r = await apiCall('/sessions', { token: dev.alice });
+  r = await apiCall(`/sessions/${r.data.sessions.find((item) => !item.current).id}`, { token: dev.alice, method: 'DELETE' });
+  r = await apiCall('/groups', { token: removable });
+  check('one session can be removed', r.status === 401, r.status);
+
+  r = await apiCall('/admin/servers', { token: dev.alice });
+  check('the server panel is admin only', r.status === 403, r.status);
+  r = await apiCall('/admin/servers', { token: dev.owner, method: 'POST', body: { name: 'prod-1' } });
+  const agent = r.data;
+  check('adding a server gives a token once', r.status === 200 && /^[0-9a-f]{64}$/.test(agent.token), JSON.stringify(r.data).slice(0, 100));
+  const sendReport = (token, body) => fetch(`${base}/api/server-report`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const goodReport = { diskPercent: 74, memoryPercent: 45.5, load: 0.8, cores: 4, uptimeSeconds: 3600, containersRunning: 13, containersTotal: 14, unhealthy: ['db-1'] };
+  check('reports need a valid token', (await sendReport('a'.repeat(64), goodReport)).status === 401);
+  check('a session token can\'t report', (await sendReport(dev.owner, goodReport)).status === 401);
+  check('reports are validated', (await sendReport(agent.token, { ...goodReport, diskPercent: 500 })).status === 400);
+  check('an agent can report', (await sendReport(agent.token, goodReport)).status === 200);
+  check('an agent can report twice in one second', (await sendReport(agent.token, goodReport)).status === 200);
+  r = await apiCall('/admin/servers', { token: dev.owner });
+  const listed = r.data.servers.find((server) => server.name === 'prod-1');
+  check('admins see server health', listed?.report?.diskPercent === 74 && listed.report.unhealthy[0] === 'db-1' && Boolean(listed.reportedAt), JSON.stringify(listed));
+  check('agent tokens are never shown again', !JSON.stringify(r.data).includes(agent.token));
+  r = await fetch(`${base}/api/admin/servers`, { headers: { authorization: `Bearer ${agent.token}` } });
+  check("an agent token can't read anything", r.status === 401, r.status);
+  r = await apiCall(`/admin/servers/${agent.id}`, { token: dev.owner, method: 'DELETE' });
+  check('deleting a server stops its reports', r.status === 200 && (await sendReport(agent.token, goodReport)).status === 401);
+
+  const leaving = (await signIn('code-u5')).token;
+  r = await apiCall('/account', { token: leaving, method: 'DELETE', body: { confirm: 'someone-else' } });
+  check('deleting an account needs the username', r.status === 400, r.status);
+  r = await apiCall('/account', { token: dev.owner, method: 'DELETE', body: { confirm: 'owner-renamed' } });
+  check("the administrator's account can't be deleted here", r.status === 400, r.status);
+  r = await apiCall('/account', { token: leaving, method: 'DELETE', body: { confirm: 'USER5' } });
+  check('users can delete their own account', r.status === 200, JSON.stringify(r.data));
+  r = await apiCall('/groups', { token: leaving });
+  check('a deleted account is signed out', r.status === 401, r.status);
+  const [[{ leftoverRows }]] = await connection.query("SELECT (SELECT COUNT(*) FROM users WHERE login = 'user5') AS leftoverRows");
+  check('a deleted account is gone from MySQL', leftoverRows === 0, leftoverRows);
 
   const noConnection = await apiCall('/dev/github', { token: dev.alice });
   check('private GitHub is offered but off by default', noConnection.data.available === true && noConnection.data.connected === false && noConnection.data.data.repos.every((repo) => !repo.private), JSON.stringify(noConnection.data).slice(0, 200));

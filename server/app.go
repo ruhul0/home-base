@@ -40,7 +40,34 @@ const (
 	contentSecurity = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 )
 
-const maxGroupsBody = 480 * 1024
+const (
+	maxGroupsBody          = 480 * 1024
+	defaultRequestsPerUser = 600
+	currentGroupsSchema    = 2
+)
+
+// requestLimiter caps how many API requests each signed-in user can make per minute.
+type requestLimiter struct {
+	mutex  sync.Mutex
+	counts map[int64]startCounter
+}
+
+func (l *requestLimiter) exceeded(userID int64) bool {
+	limit := defaultRequestsPerUser
+	if configured, err := strconv.Atoi(os.Getenv("RATE_LIMIT_PER_MINUTE")); err == nil && configured > 0 {
+		limit = configured
+	}
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	now := time.Now()
+	counter, found := l.counts[userID]
+	if !found || !counter.expiresAt.After(now) {
+		counter = startCounter{expiresAt: now.Add(time.Minute)}
+	}
+	counter.count++
+	l.counts[userID] = counter
+	return counter.count > limit
+}
 
 var (
 	challengePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
@@ -142,6 +169,7 @@ type App struct {
 	codes     *expiring[loginCode]
 	starts    *startLimiter
 	dev       *DevServices
+	requests  *requestLimiter
 }
 
 func newApp(store *Store, publicDir string) *App {
@@ -152,6 +180,7 @@ func newApp(store *Store, publicDir string) *App {
 		codes:     newExpiring[loginCode](),
 		starts:    &startLimiter{counts: map[string]startCounter{}},
 		dev:       newDevServices(),
+		requests:  &requestLimiter{counts: map[int64]startCounter{}},
 	}
 }
 
@@ -264,6 +293,11 @@ func (a *App) signedIn(next authedHandler) http.HandlerFunc {
 		}
 		if userID == 0 {
 			writeError(w, http.StatusUnauthorized, "Please sign in.")
+			return
+		}
+		if a.requests.exceeded(userID) {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusTooManyRequests, "Too many requests. Try again in a minute.")
 			return
 		}
 		next(w, r, session{token: match[1], userID: userID})
@@ -521,7 +555,7 @@ func (a *App) handleExchange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "That sign-in has expired. Try again.")
 		return
 	}
-	token, err := a.store.createSession(r.Context(), entry.userID)
+	token, err := a.store.createSession(r.Context(), entry.userID, sessionLabel(r))
 	if err != nil {
 		writeServerError(w, err)
 		return
@@ -590,6 +624,7 @@ func (a *App) handlePutGroups(w http.ResponseWriter, r *http.Request, current se
 	const invalid = "Those sites could not be saved."
 	var body struct {
 		Groups []Group `json:"groups"`
+		Schema int     `json:"schema"`
 	}
 	// Custom icons travel with the sites. This limit stays under nginx's 512 KB request limit.
 	if !readJSONWithin(w, r, &body, invalid, maxGroupsBody) {
@@ -599,6 +634,16 @@ func (a *App) handlePutGroups(w http.ResponseWriter, r *http.Request, current se
 	if !ok {
 		writeError(w, http.StatusBadRequest, invalid)
 		return
+	}
+	// Extension versions from before icons and colours existed send sites without them.
+	// Those saves keep what's stored, so an old version can't erase a user's design.
+	if body.Schema < currentGroupsSchema {
+		existing, err := a.store.getGroups(r.Context(), current.userID)
+		if err != nil {
+			writeServerError(w, err)
+			return
+		}
+		keepCustomization(groups, existing)
 	}
 	if err := a.store.replaceGroups(r.Context(), current.userID, groups); err != nil {
 		writeServerError(w, err)
@@ -762,6 +807,7 @@ func (a *App) handleAdminDelete(w http.ResponseWriter, r *http.Request, current 
 	if !ok {
 		return
 	}
+	a.revokeUserGrant(r.Context(), id)
 	deleted, err := a.store.deleteUser(r.Context(), id)
 	if err != nil {
 		writeServerError(w, err)

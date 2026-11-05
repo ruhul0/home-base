@@ -49,7 +49,7 @@ var preferenceChoices = map[string][]string{
 var preferenceSwitches = []string{
 	"showClock", "showSeconds", "showGreeting", "showDate", "showSearch",
 	"showLabels", "showGroupTitles", "showMostVisited", "showBookmarks",
-	"showGitHub", "showNews", "showMonitors", "showTodos", "showNotes", "showClocks",
+	"showGitHub", "showNews", "showMonitors", "showTodos", "showNotes", "showClocks", "showServers",
 }
 
 var backgroundDims = []float64{0, 20, 40, 60}
@@ -183,6 +183,34 @@ func cleanIconImage(dataURL string, totalLength int) bool {
 
 func cleanOptionalColour(colour string) bool {
 	return colour == "" || hexColour.MatchString(colour)
+}
+
+// keepCustomization fills in icons and colours from the stored sites, matching links by address
+// and groups by name.
+func keepCustomization(groups, existing []Group) {
+	links := map[string]Link{}
+	colours := map[string]string{}
+	for _, group := range existing {
+		colours[group.Name] = group.Color
+		for _, link := range group.Links {
+			links[link.URL] = link
+		}
+	}
+	for groupIndex := range groups {
+		group := &groups[groupIndex]
+		if group.Color == "" {
+			group.Color = colours[group.Name]
+		}
+		for linkIndex := range group.Links {
+			link := &group.Links[linkIndex]
+			if link.Icon == "" {
+				link.Icon = links[link.URL].Icon
+			}
+			if link.IconColor == "" {
+				link.IconColor = links[link.URL].IconColor
+			}
+		}
+	}
 }
 
 func cleanGroups(input []Group) ([]Group, bool) {
