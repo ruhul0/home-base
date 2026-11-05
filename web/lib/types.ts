@@ -77,6 +77,7 @@ export interface GitHubDashboard {
   issues: GitHubItem[];
   events: { type: string; repo: string; createdAt: string }[];
   partial: boolean;
+  fromRecentRepos: boolean;
 }
 
 export interface NewsStory {

@@ -53,9 +53,23 @@ http.createServer((req, res) => {
   const issue = (kind) => ({ title: `Alice's open ${kind}`, html_url: `https://github.com/alice/app/${kind}/1`, number: 1, updated_at: '2026-11-01T00:00:00Z', repository_url: 'https://api.github.com/repos/alice/app' });
   if (url.pathname === '/search/issues') {
     const query = url.searchParams.get('q') ?? '';
+    if (query.includes('author:user4')) {
+      res.statusCode = 422;
+      return respond({ message: 'Validation Failed' });
+    }
     if (!query.includes('author:alice')) return respond({ items: [] });
     if (query.includes('is:pr')) return respond({ items: [issue('pull'), { ...issue('pull'), title: 'Bad link', html_url: 'javascript:alert(1)' }] });
     return respond({ items: [issue('issues')] });
+  }
+  if (url.pathname === '/users/user4') return respond({ name: '', public_repos: 2, followers: 0, following: 0 });
+  if (url.pathname === '/users/user4/repos') return respond([{ full_name: 'user4/tool', html_url: 'https://github.com/user4/tool', description: '', language: 'Go', stargazers_count: 1, pushed_at: '2026-11-01T00:00:00Z' }]);
+  if (url.pathname === '/users/user4/events/public') return respond([]);
+  if (url.pathname === '/repos/user4/tool/issues') {
+    return respond(url.searchParams.get('creator') !== 'user4' ? [] : [
+      { title: 'A pull request', html_url: 'https://github.com/user4/tool/pull/2', number: 2, updated_at: '2026-11-02T00:00:00Z', pull_request: { url: 'x' } },
+      { title: 'An issue', html_url: 'https://github.com/user4/tool/issues/1', number: 1, updated_at: '2026-11-01T00:00:00Z' },
+      { title: 'Bad link', html_url: 'javascript:alert(1)', number: 3, updated_at: '2026-11-03T00:00:00Z' },
+    ]);
   }
   if (url.pathname === '/users/alice') return respond({ name: 'Alice', public_repos: 3, followers: 5, following: 2 });
   if (url.pathname === '/users/alice/repos') return respond([{ full_name: 'alice/app', html_url: 'https://github.com/alice/app', description: 'An app', language: 'Go', stargazers_count: 9, pushed_at: '2026-11-01T00:00:00Z' }]);

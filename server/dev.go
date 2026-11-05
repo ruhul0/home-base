@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,8 @@ const (
 	maxTodoLength      = 300
 	maxNotesLength     = 20000
 )
+
+const maxOpenItems = 6
 
 // cached keeps one recent value per key. If a refresh fails, the last good value is still served,
 // so a GitHub or Hacker News outage doesn't blank the dashboard.
@@ -130,16 +133,17 @@ type GitHubEvent struct {
 
 // GitHubDashboard is what the GitHub panel shows. Partial is true if some sections couldn't be loaded.
 type GitHubDashboard struct {
-	Login        string        `json:"login"`
-	Name         string        `json:"name"`
-	PublicRepos  int           `json:"publicRepos"`
-	Followers    int           `json:"followers"`
-	Following    int           `json:"following"`
-	Repos        []GitHubRepo  `json:"repos"`
-	PullRequests []GitHubItem  `json:"pullRequests"`
-	Issues       []GitHubItem  `json:"issues"`
-	Events       []GitHubEvent `json:"events"`
-	Partial      bool          `json:"partial"`
+	Login           string        `json:"login"`
+	Name            string        `json:"name"`
+	PublicRepos     int           `json:"publicRepos"`
+	Followers       int           `json:"followers"`
+	Following       int           `json:"following"`
+	Repos           []GitHubRepo  `json:"repos"`
+	PullRequests    []GitHubItem  `json:"pullRequests"`
+	Issues          []GitHubItem  `json:"issues"`
+	Events          []GitHubEvent `json:"events"`
+	Partial         bool          `json:"partial"`
+	FromRecentRepos bool          `json:"fromRecentRepos"`
 }
 
 // githubGet reads public data. The app's own credentials are only used for GitHub's higher rate limit.
@@ -202,6 +206,67 @@ func searchGitHubItems(ctx context.Context, login, kind string) ([]GitHubItem, e
 	return items, nil
 }
 
+// openItemsFromRepos lists the user's own open pull requests and issues in the given repositories.
+// It returns false if any repository couldn't be read.
+func openItemsFromRepos(ctx context.Context, login string, repos []GitHubRepo) ([]GitHubItem, []GitHubItem, bool) {
+	type repoItem struct {
+		GitHubItem
+		isPullRequest bool
+	}
+	var (
+		mutex    sync.Mutex
+		group    sync.WaitGroup
+		found    []repoItem
+		complete = true
+	)
+	query := url.Values{"state": {"open"}, "creator": {login}, "sort": {"updated"}, "per_page": {"6"}}.Encode()
+	for _, repo := range repos {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			owner, name, ok := strings.Cut(repo.Name, "/")
+			if !ok {
+				return
+			}
+			var items []struct {
+				Title       string          `json:"title"`
+				HTMLURL     string          `json:"html_url"`
+				Number      int             `json:"number"`
+				UpdatedAt   string          `json:"updated_at"`
+				PullRequest json.RawMessage `json:"pull_request"`
+			}
+			err := githubGet(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/issues?"+query, &items)
+			mutex.Lock()
+			defer mutex.Unlock()
+			if err != nil {
+				log.Printf("GitHub dashboard: %v", err)
+				complete = false
+				return
+			}
+			for _, item := range items {
+				if link := safeLink(item.HTMLURL); link != "" {
+					found = append(found, repoItem{
+						GitHubItem:    GitHubItem{Title: item.Title, URL: link, Repo: repo.Name, Number: item.Number, UpdatedAt: item.UpdatedAt},
+						isPullRequest: item.PullRequest != nil,
+					})
+				}
+			}
+		}()
+	}
+	group.Wait()
+
+	sort.Slice(found, func(left, right int) bool { return found[left].UpdatedAt > found[right].UpdatedAt })
+	pullRequests, issues := []GitHubItem{}, []GitHubItem{}
+	for _, item := range found {
+		if item.isPullRequest && len(pullRequests) < maxOpenItems {
+			pullRequests = append(pullRequests, item.GitHubItem)
+		} else if !item.isPullRequest && len(issues) < maxOpenItems {
+			issues = append(issues, item.GitHubItem)
+		}
+	}
+	return pullRequests, issues, complete
+}
+
 func fetchGitHubDashboard(ctx context.Context, login string) (GitHubDashboard, error) {
 	escaped := url.PathEscape(login)
 	dashboard := GitHubDashboard{Login: login, Repos: []GitHubRepo{}, PullRequests: []GitHubItem{}, Issues: []GitHubItem{}, Events: []GitHubEvent{}}
@@ -238,17 +303,20 @@ func fetchGitHubDashboard(ctx context.Context, login string) (GitHubDashboard, e
 		}
 	}
 
-	if items, err := searchGitHubItems(ctx, login, "pr"); err != nil {
-		log.Printf("GitHub dashboard: %v", err)
-		dashboard.Partial = true
+	pullRequests, pullRequestsErr := searchGitHubItems(ctx, login, "pr")
+	issues, issuesErr := searchGitHubItems(ctx, login, "issue")
+	if pullRequestsErr == nil && issuesErr == nil {
+		dashboard.PullRequests = pullRequests
+		dashboard.Issues = issues
 	} else {
-		dashboard.PullRequests = items
-	}
-	if items, err := searchGitHubItems(ctx, login, "issue"); err != nil {
-		log.Printf("GitHub dashboard: %v", err)
-		dashboard.Partial = true
-	} else {
-		dashboard.Issues = items
+		// GitHub refuses to search some accounts without a user token, so read recent repositories instead.
+		log.Printf("GitHub dashboard: search unavailable, reading recent repositories: %v", errors.Join(pullRequestsErr, issuesErr))
+		dashboard.FromRecentRepos = true
+		var complete bool
+		dashboard.PullRequests, dashboard.Issues, complete = openItemsFromRepos(ctx, login, dashboard.Repos)
+		if !complete {
+			dashboard.Partial = true
+		}
 	}
 
 	var events []struct {

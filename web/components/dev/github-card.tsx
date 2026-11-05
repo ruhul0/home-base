@@ -139,7 +139,7 @@ export function GitHubCard({ onSignedOut }: { onSignedOut: () => void }) {
 
           <p className="flex items-center gap-1 px-1 text-xs opacity-60">
             <UsersIcon className="size-3" />
-            Public data only, updated every 10 minutes{data.partial ? ". Some sections couldn't be loaded." : "."}
+            Public data only, updated every 10 minutes.{data.fromRecentRepos ? " Pull requests and issues come from your recent repositories." : ""}{data.partial ? " Some sections couldn't be loaded." : ""}
           </p>
         </div>
       )}

@@ -437,6 +437,14 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall('/dev/github', { token: dev.owner });
   check("one user's GitHub data isn't shown to another", r.status !== 200 || !JSON.stringify(r.data).includes('alice/app'), JSON.stringify(r.data).slice(0, 200));
 
+  const unsearchable = await signIn('code-u4');
+  r = await apiCall('/dev/github', { token: unsearchable.token });
+  check('GitHub panel survives an account search refuses', r.status === 200 && r.data.data.fromRecentRepos === true && r.data.data.partial === false, JSON.stringify(r.data).slice(0, 300));
+  check('open items come from recent repositories instead', r.data.data.pullRequests[0]?.title === 'A pull request' && r.data.data.issues[0]?.title === 'An issue' && r.data.data.issues.length === 1, JSON.stringify(r.data.data.issues));
+  check('repository items drop unsafe links', !JSON.stringify(r.data).includes('javascript:'));
+  r = await apiCall('/dev/github', { token: dev.alice });
+  check('searchable accounts still use search', r.data.data.fromRecentRepos === false, r.data.data.fromRecentRepos);
+
   r = await apiCall('/dev/news', { token: dev.alice });
   check('news loads', r.status === 200 && r.data.stories[0].title === 'A real story' && r.data.stories[0].comments === 7, JSON.stringify(r.data).slice(0, 200));
   check('news replaces unsafe links with the discussion', r.data.stories[1].url === 'https://news.ycombinator.com/item?id=102', r.data.stories[1]?.url);
