@@ -17,6 +17,10 @@ const DEFAULT_PREFERENCES = {
 };
 const VERIFIER_KEY = 'login-verifier';
 const PROMPT_DISMISSED_KEY = 'extension-prompt-dismissed';
+const AUTO_LOGIN_KEY = 'auto-login';
+const SILENT_ATTEMPT_KEY = 'silent-login-at';
+const SILENT_ATTEMPT_INTERVAL_MS = 60 * 60 * 1000;
+const SILENT_TIMEOUT_MS = 5000;
 const LOGIN_ERRORS = {
   denied: 'GitHub sign-in was cancelled.',
   not_allowed: "This GitHub account doesn't have access.",
@@ -172,6 +176,8 @@ async function refreshGroups() {
   groups = data.groups;
   userLogin = data.user.login;
   $('user-name').textContent = `@${userLogin}`;
+  $('admin-link').hidden = !data.user.isAdmin;
+  $('admin-link').href = `${API_BASE}/admin.html`;
   updateClock();
   preferences = { ...DEFAULT_PREFERENCES, ...data.preferences };
   applyPreferences();
@@ -508,17 +514,26 @@ async function finishLogin(code, verifier) {
   const data = await api('/api/auth/exchange', { method: 'POST', body: { code, verifier } });
   token = data.token;
   await store.set(TOKEN_KEY, token);
+  await store.set(AUTO_LOGIN_KEY, true);
   await showApp();
+}
+
+// The server only hands over a session to the browser holding the secret behind this challenge.
+async function createLoginProof() {
+  const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return { verifier, challenge: base64Url(digest) };
+}
+
+function extensionLoginUrl(challenge) {
+  return `${API_BASE}/auth/github/start?client=extension&extension_id=${chrome.runtime.id}&challenge=${challenge}`;
 }
 
 // The extension signs in through Chrome's own sign-in window, which returns the result directly.
 async function loginInExtension(verifier, challenge) {
   let redirected;
   try {
-    redirected = await chrome.identity.launchWebAuthFlow({
-      url: `${API_BASE}/auth/github/start?client=extension&extension_id=${chrome.runtime.id}&challenge=${challenge}`,
-      interactive: true,
-    });
+    redirected = await chrome.identity.launchWebAuthFlow({ url: extensionLoginUrl(challenge), interactive: true });
   } catch {
     showLoginError(LOGIN_ERRORS.denied);
     return;
@@ -531,14 +546,34 @@ async function loginInExtension(verifier, challenge) {
   await finishLogin(params.get('code'), verifier);
 }
 
-// The server only hands over a session to the browser holding the secret behind this challenge.
+// If the browser is already signed in to GitHub and has approved Home Base, this finishes with
+// no window at all. Otherwise it fails quietly and the sign-in button stays on the page.
+// New tabs open often, so it runs at most once an hour and never after someone signs out.
+async function trySilentExtensionLogin() {
+  if ((await store.get(AUTO_LOGIN_KEY)) === false) return;
+  const lastAttempt = await store.get(SILENT_ATTEMPT_KEY);
+  if (lastAttempt && Date.now() - lastAttempt < SILENT_ATTEMPT_INTERVAL_MS) return;
+  await store.set(SILENT_ATTEMPT_KEY, Date.now());
+
+  try {
+    const { verifier, challenge } = await createLoginProof();
+    const redirected = await chrome.identity.launchWebAuthFlow({
+      url: extensionLoginUrl(challenge),
+      interactive: false,
+      timeoutMsForNonInteractive: SILENT_TIMEOUT_MS,
+    });
+    const code = new URL(redirected).searchParams.get('code');
+    if (code) await finishLogin(code, verifier);
+  } catch {
+    // Someone not signed in to GitHub simply sees the sign-in button.
+  }
+}
+
 async function handleLogin() {
   $('login-error').hidden = true;
   $('github-login').disabled = true;
   try {
-    const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-    const challenge = base64Url(digest);
+    const { verifier, challenge } = await createLoginProof();
 
     if (hasChrome) {
       await loginInExtension(verifier, challenge);
@@ -601,7 +636,10 @@ async function handleSignOut() {
   } catch {
     // The local session still ends if the server can't be reached.
   }
+  // Signing out is a deliberate choice, so automatic sign-in stays off until the next manual sign-in.
+  await store.set(AUTO_LOGIN_KEY, false);
   await showLogin();
+  if (!hasChrome) location.replace('/');
 }
 
 function updateClock() {
@@ -666,8 +704,24 @@ async function start() {
   if (await resumeLogin()) return;
 
   token = await store.get(TOKEN_KEY);
-  if (token) await showApp();
-  else await showLogin();
+  if (token) {
+    await showApp();
+    return;
+  }
+
+  if (hasChrome) {
+    await showLogin();
+    await trySilentExtensionLogin();
+    return;
+  }
+
+  if (new URLSearchParams(location.search).has('signin')) {
+    history.replaceState(null, '', location.pathname);
+    await showLogin();
+    await handleLogin();
+    return;
+  }
+  location.replace('/');
 }
 
 start();

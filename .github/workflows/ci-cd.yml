@@ -1,0 +1,64 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check script syntax
+        run: |
+          for file in *.js server/*.js server/test/*.js; do node --check "$file"; done
+          for file in deploy/*.sh; do bash -n "$file"; done
+
+      - name: Build the extension package
+        run: bash deploy/package-extension.sh
+
+      - name: Build the app image
+        run: docker build -t chrome-home-app -f server/Dockerfile .
+
+      - name: Run the tests against a temporary database
+        run: docker compose -f server/test/stack.yml run --rm -T runner node - < server/test/flow.test.js
+
+      - name: Remove the temporary database
+        if: always()
+        run: docker compose -f server/test/stack.yml down -v
+
+  deploy:
+    # Pull requests never reach this job, so code from forks can't use the deploy key.
+    # deploy/setup-cd.sh sets DEPLOY_ENABLED once the deploy key is in place.
+    if: vars.DEPLOY_ENABLED == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    steps:
+      - name: Set up the deploy key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Deploy to the server
+        env:
+          DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
+        run: ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_TARGET"
+
+      - name: Check the live site
+        run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -m 10 https://chrome.ruhul0.com/api/health

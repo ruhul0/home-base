@@ -51,7 +51,8 @@ async function fetchUser({ code, redirectUri }) {
   if (!userResponse.ok) throw new Error(`GitHub profile request failed: ${userResponse.status}`);
 
   const user = await userResponse.json();
-  return { githubId: user.id, login: user.login };
+  // GitHub only allows verified addresses as a public email, so it's safe to compare against.
+  return { githubId: user.id, login: user.login, publicEmail: user.email || null };
 }
 
 module.exports = { isConfigured, authorizeUrl, fetchUser };

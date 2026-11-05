@@ -1,10 +1,17 @@
 **
+!index.html
+!landing.css
+!landing.js
 !newtab.html
 !newtab.css
 !newtab.js
+!admin.html
+!admin.css
+!admin.js
 !privacy.html
 !privacy.css
 !icons/*.png
+!assets/store/screenshot-*.png
 !server/*.js
 !server/package.json
 !server/package-lock.json

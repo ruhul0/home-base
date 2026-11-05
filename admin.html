@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Home Base admin</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon32.png">
+  <link rel="stylesheet" href="newtab.css">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <header class="top admin-top">
+    <h1>Home Base admin</h1>
+    <a href="newtab.html">Back to my page</a>
+  </header>
+
+  <main>
+    <p id="admin-message" class="notice" role="status" hidden></p>
+
+    <div id="admin-content" hidden>
+      <section id="stats" class="stats" aria-label="Totals"></section>
+
+      <section class="card">
+        <h2>Users</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">User</th>
+                <th scope="col">Joined</th>
+                <th scope="col">Last seen</th>
+                <th scope="col" class="number">Groups</th>
+                <th scope="col" class="number">Links</th>
+                <th scope="col" class="number">Sessions</th>
+                <th scope="col">Status</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="admin.js"></script>
+</body>
+</html>

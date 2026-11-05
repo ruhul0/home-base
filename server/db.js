@@ -18,6 +18,9 @@ const SCHEMA = [
      github_id BIGINT NOT NULL UNIQUE,
      login VARCHAR(100) NOT NULL,
      preferences TEXT NULL,
+     is_admin TINYINT(1) NOT NULL DEFAULT 0,
+     disabled_at DATETIME NULL,
+     last_seen_at DATETIME NULL,
      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
    ) CHARACTER SET utf8mb4`,
   `CREATE TABLE IF NOT EXISTS sessions (
@@ -77,8 +80,16 @@ async function upgradeFromPasswordVersion() {
 async function migrate() {
   for (const statement of SCHEMA) await pool.query(statement);
   await upgradeFromPasswordVersion();
-  if (!(await columnExists('users', 'preferences'))) {
-    await pool.query('ALTER TABLE users ADD COLUMN preferences TEXT NULL');
+  const newUserColumns = {
+    preferences: 'TEXT NULL',
+    is_admin: 'TINYINT(1) NOT NULL DEFAULT 0',
+    disabled_at: 'DATETIME NULL',
+    last_seen_at: 'DATETIME NULL',
+  };
+  for (const [column, definition] of Object.entries(newUserColumns)) {
+    if (!(await columnExists('users', column))) {
+      await pool.query(`ALTER TABLE users ADD COLUMN ${column} ${definition}`);
+    }
   }
 }
 
@@ -113,41 +124,112 @@ async function inTransaction(work) {
   }
 }
 
-// Returns the user's id, or null if the site has reached its user limit.
-function findOrCreateUser({ githubId, login, isOwner, maxUsers }) {
+// Returns { id, disabled }, or null if the site has reached its user limit.
+// Admin access is worked out again at every sign-in, so removing it takes effect next time.
+function findOrCreateUser({ githubId, login, isOwner, isAdmin, maxUsers }) {
   return inTransaction(async (connection) => {
-    const [existing] = await connection.query('SELECT id FROM users WHERE github_id = ?', [githubId]);
+    const [existing] = await connection.query(
+      'SELECT id, disabled_at FROM users WHERE github_id = ?',
+      [githubId],
+    );
     if (existing.length) {
       // GitHub usernames can change, so accounts are matched on the permanent numeric id.
-      await connection.query('UPDATE users SET login = ? WHERE id = ?', [login, existing[0].id]);
-      return existing[0].id;
+      await connection.query(
+        'UPDATE users SET login = ?, is_admin = ?, last_seen_at = NOW() WHERE id = ?',
+        [login, isAdmin, existing[0].id],
+      );
+      return { id: existing[0].id, disabled: Boolean(existing[0].disabled_at) };
     }
 
     const [[{ total }]] = await connection.query('SELECT COUNT(*) AS total FROM users');
     if (total >= maxUsers) return null;
 
     const [created] = await connection.query(
-      'INSERT INTO users (github_id, login) VALUES (?, ?)',
-      [githubId, login],
+      'INSERT INTO users (github_id, login, is_admin, last_seen_at) VALUES (?, ?, ?, NOW())',
+      [githubId, login, isAdmin],
     );
     const userId = created.insertId;
+    const newUser = { id: userId, disabled: false };
 
     if (isOwner) {
       const [claimed] = await connection.query(
         'UPDATE link_groups SET user_id = ? WHERE user_id IS NULL',
         [userId],
       );
-      if (claimed.affectedRows > 0) return userId;
+      if (claimed.affectedRows > 0) return newUser;
     }
     await writeGroups(connection, userId, defaults);
-    return userId;
+    return newUser;
   });
 }
 
 async function getUser(userId) {
-  const [rows] = await pool.query('SELECT login, preferences FROM users WHERE id = ?', [userId]);
+  const [rows] = await pool.query('SELECT login, preferences, is_admin FROM users WHERE id = ?', [userId]);
   if (!rows.length) return null;
-  return { login: rows[0].login, preferences: rows[0].preferences ? JSON.parse(rows[0].preferences) : {} };
+  return {
+    login: rows[0].login,
+    isAdmin: Boolean(rows[0].is_admin),
+    preferences: rows[0].preferences ? JSON.parse(rows[0].preferences) : {},
+  };
+}
+
+async function touchUser(userId) {
+  await pool.query('UPDATE users SET last_seen_at = NOW() WHERE id = ?', [userId]);
+}
+
+async function isAdmin(userId) {
+  const [rows] = await pool.query('SELECT is_admin FROM users WHERE id = ?', [userId]);
+  return rows.length > 0 && Boolean(rows[0].is_admin);
+}
+
+// Only counts and account details, never the sites people have saved.
+async function getAdminOverview() {
+  const [[totals]] = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM users) AS users,
+       (SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL 7 DAY) AS newUsers7Days,
+       (SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL 30 DAY) AS newUsers30Days,
+       (SELECT COUNT(*) FROM users WHERE last_seen_at > NOW() - INTERVAL 7 DAY) AS active7Days,
+       (SELECT COUNT(*) FROM sessions WHERE expires_at > NOW()) AS sessions,
+       (SELECT COUNT(*) FROM links) AS links`,
+  );
+  const [users] = await pool.query(
+    `SELECT u.id, u.login, u.is_admin, u.disabled_at, u.last_seen_at, u.created_at,
+       (SELECT COUNT(*) FROM link_groups g WHERE g.user_id = u.id) AS group_count,
+       (SELECT COUNT(*) FROM links l JOIN link_groups g ON g.id = l.group_id WHERE g.user_id = u.id) AS link_count,
+       (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > NOW()) AS session_count
+     FROM users u
+     ORDER BY u.created_at DESC`,
+  );
+  return {
+    totals,
+    users: users.map((user) => ({
+      id: user.id,
+      login: user.login,
+      isAdmin: Boolean(user.is_admin),
+      disabled: Boolean(user.disabled_at),
+      lastSeenAt: user.last_seen_at,
+      createdAt: user.created_at,
+      groups: user.group_count,
+      links: user.link_count,
+      sessions: user.session_count,
+    })),
+  };
+}
+
+async function deleteUserSessions(userId) {
+  await pool.query('DELETE FROM sessions WHERE user_id = ?', [userId]);
+}
+
+async function setUserDisabled(userId, disabled) {
+  await pool.query('UPDATE users SET disabled_at = ? WHERE id = ?', [disabled ? new Date() : null, userId]);
+  if (disabled) await deleteUserSessions(userId);
+}
+
+// Their sessions, groups and links are removed with them by the database's cascading deletes.
+async function deleteUser(userId) {
+  const [result] = await pool.query('DELETE FROM users WHERE id = ?', [userId]);
+  return result.affectedRows > 0;
 }
 
 async function setPreferences(userId, preferences) {
@@ -178,4 +260,18 @@ function replaceGroups(userId, groups) {
   return inTransaction((connection) => writeGroups(connection, userId, groups));
 }
 
-module.exports = { pool, migrate, findOrCreateUser, getUser, setPreferences, getGroups, replaceGroups };
+module.exports = {
+  pool,
+  migrate,
+  findOrCreateUser,
+  getUser,
+  touchUser,
+  isAdmin,
+  getAdminOverview,
+  deleteUserSessions,
+  setUserDisabled,
+  deleteUser,
+  setPreferences,
+  getGroups,
+  replaceGroups,
+};

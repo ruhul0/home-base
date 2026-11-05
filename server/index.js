@@ -31,7 +31,15 @@ function withParams(target, params) {
 }
 
 function homePage() {
-  return `${publicUrl()}/`;
+  return `${publicUrl()}/newtab.html`;
+}
+
+// The numeric GitHub ID never changes, unlike a username, which someone else could claim if it's released.
+function isAdminProfile({ githubId, publicEmail }) {
+  const adminId = process.env.ADMIN_GITHUB_ID;
+  const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase();
+  if (adminId && String(githubId) === adminId) return true;
+  return Boolean(adminEmail && publicEmail && publicEmail.toLowerCase() === adminEmail);
 }
 
 // Sign-in only ever returns to this website or to an approved extension, never to an address from the request.
@@ -237,16 +245,19 @@ githubAuth.get('/callback', async (req, res) => {
     const profile = await github.fetchUser({ code: String(req.query.code || ''), redirectUri: redirectUri() });
     if (!isAllowed(profile.login)) return res.redirect(withParams(target, { error: 'not_allowed' }));
 
-    const userId = await db.findOrCreateUser({
-      ...profile,
+    const user = await db.findOrCreateUser({
+      githubId: profile.githubId,
+      login: profile.login,
       isOwner: isOwner(profile.login),
+      isAdmin: isAdminProfile(profile),
       maxUsers: maxUsers(),
     });
-    if (!userId) return res.redirect(withParams(target, { error: 'full' }));
+    if (!user) return res.redirect(withParams(target, { error: 'full' }));
+    if (user.disabled) return res.redirect(withParams(target, { error: 'not_allowed' }));
 
     dropExpired(loginCodes);
     const code = crypto.randomBytes(32).toString('hex');
-    loginCodes.set(code, { userId, challenge: pending.challenge, expiresAt: Date.now() + LOGIN_CODE_MS });
+    loginCodes.set(code, { userId: user.id, challenge: pending.challenge, expiresAt: Date.now() + LOGIN_CODE_MS });
     res.redirect(withParams(target, { code }));
   } catch (error) {
     console.error(error.message);
@@ -266,6 +277,10 @@ api.get('/health', async (req, res) => {
   res.json({ ok: true });
 });
 
+api.get('/config', (req, res) => {
+  res.json({ extensionUrl: process.env.EXTENSION_URL || null });
+});
+
 api.post('/auth/exchange', async (req, res) => {
   const entry = takeOnce(loginCodes, String(req.body?.code || ''));
   const verifier = typeof req.body?.verifier === 'string' ? req.body.verifier : '';
@@ -282,9 +297,10 @@ api.post('/logout', requireSession, async (req, res) => {
 
 api.get('/groups', requireSession, async (req, res) => {
   const [groups, user] = await Promise.all([db.getGroups(req.userId), db.getUser(req.userId)]);
+  await db.touchUser(req.userId);
   res.json({
     groups,
-    user: { login: user.login },
+    user: { login: user.login, isAdmin: user.isAdmin },
     preferences: user.preferences,
     extensionUrl: process.env.EXTENSION_URL || null,
   });
@@ -309,12 +325,71 @@ api.post('/groups/reset', requireSession, async (req, res) => {
   res.json({ groups: await db.getGroups(req.userId) });
 });
 
+const admin = express.Router();
+admin.use(requireSession);
+admin.use(async (req, res, next) => {
+  if (!(await db.isAdmin(req.userId))) return res.status(403).json({ error: "This account doesn't have admin access." });
+  next();
+});
+
+function targetUserId(req, res) {
+  const id = Number(req.params.id);
+  if (Number.isSafeInteger(id) && id > 0) return id;
+  res.status(400).json({ error: 'That user is not valid.' });
+  return null;
+}
+
+// Admins can't disable or delete themselves, which would lock everyone out of this dashboard.
+function targetOtherUserId(req, res) {
+  const id = targetUserId(req, res);
+  if (id === null) return null;
+  if (id !== req.userId) return id;
+  res.status(400).json({ error: "You can't do that to your own account." });
+  return null;
+}
+
+admin.get('/overview', async (req, res) => {
+  res.json({ ...(await db.getAdminOverview()), currentUserId: req.userId });
+});
+
+admin.post('/users/:id/sign-out', async (req, res) => {
+  const id = targetUserId(req, res);
+  if (id === null) return;
+  await db.deleteUserSessions(id);
+  res.json({ ok: true });
+});
+
+admin.post('/users/:id/disable', async (req, res) => {
+  const id = targetOtherUserId(req, res);
+  if (id === null) return;
+  await db.setUserDisabled(id, true);
+  console.log(`Admin ${req.userId} disabled user ${id}`);
+  res.json({ ok: true });
+});
+
+admin.post('/users/:id/enable', async (req, res) => {
+  const id = targetUserId(req, res);
+  if (id === null) return;
+  await db.setUserDisabled(id, false);
+  console.log(`Admin ${req.userId} enabled user ${id}`);
+  res.json({ ok: true });
+});
+
+admin.delete('/users/:id', async (req, res) => {
+  const id = targetOtherUserId(req, res);
+  if (id === null) return;
+  if (!(await db.deleteUser(id))) return res.status(404).json({ error: 'That user no longer exists.' });
+  console.log(`Admin ${req.userId} deleted user ${id}`);
+  res.json({ ok: true });
+});
+
+api.use('/admin', admin);
+
 api.use((req, res) => res.status(404).json({ error: 'Not found.' }));
 
 app.use('/auth/github', githubAuth);
 app.use('/api', api);
 app.use(express.static(path.join(__dirname, 'public'), {
-  index: 'newtab.html',
   setHeaders: (res) => res.set('Cache-Control', 'no-cache'),
 }));
 

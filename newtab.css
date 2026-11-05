@@ -138,6 +138,8 @@ button[aria-pressed="true"] { color: var(--accent); }
 }
 .account-actions { display: flex; align-items: center; gap: 4px; }
 .user-name { margin-right: 8px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.admin-link { padding: 7px 13px; color: var(--muted); border-radius: 10px; text-decoration: none; }
+.admin-link:hover { color: var(--text); background: var(--hover); }
 
 main {
   max-width: 1120px;

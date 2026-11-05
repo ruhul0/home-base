@@ -22,7 +22,9 @@ async function createSession(userId) {
 
 async function findSessionUser(token) {
   const [rows] = await db.pool.query(
-    'SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > NOW()',
+    `SELECT s.user_id FROM sessions s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.token_hash = ? AND s.expires_at > NOW() AND u.disabled_at IS NULL`,
     [hashToken(token)],
   );
   return rows.length ? rows[0].user_id : null;

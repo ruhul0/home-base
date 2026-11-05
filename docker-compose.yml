@@ -22,6 +22,8 @@ services:
       MAX_USERS: ${MAX_USERS:-200}
       EXTENSION_IDS: ${EXTENSION_IDS:-ckmmmpglhbeeeppgclggngmgdjogmlmh}
       EXTENSION_URL: ${EXTENSION_URL:-}
+      ADMIN_GITHUB_ID: ${ADMIN_GITHUB_ID:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
     ports:
       - "127.0.0.1:13100:3000"
     networks:

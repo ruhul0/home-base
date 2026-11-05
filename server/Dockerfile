@@ -7,8 +7,9 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY server/*.js ./
-COPY newtab.html newtab.css newtab.js privacy.html privacy.css ./public/
+COPY index.html landing.css landing.js newtab.html newtab.css newtab.js admin.html admin.css admin.js privacy.html privacy.css ./public/
 COPY icons ./public/icons
+COPY assets/store/screenshot-*.png ./public/screens/
 
 USER node
 CMD ["node", "index.js"]

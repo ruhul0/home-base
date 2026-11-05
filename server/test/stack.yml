@@ -1,0 +1,42 @@
+name: chrome-home-test
+
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: throwaway-root
+      MYSQL_DATABASE: test
+      MYSQL_USER: test
+      MYSQL_PASSWORD: throwaway
+    command:
+      - --innodb-buffer-pool-size=64M
+      - --performance-schema=OFF
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -pthrowaway-root --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    mem_limit: 512m
+
+  runner:
+    image: chrome-home-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_NAME: test
+      DB_USER: test
+      DB_PASSWORD: throwaway
+      PUBLIC_URL: http://localhost:3000
+      OWNER_GITHUB_LOGIN: Owner-User
+      GITHUB_CLIENT_ID: test-client
+      GITHUB_CLIENT_SECRET: test-secret
+      GITHUB_WEB_URL: http://localhost:4000
+      GITHUB_API_URL: http://localhost:4000
+      MAX_USERS: "5"
+      EXTENSION_IDS: ckmmmpglhbeeeppgclggngmgdjogmlmh
+      ADMIN_GITHUB_ID: "1001"
