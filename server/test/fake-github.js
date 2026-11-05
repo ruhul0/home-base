@@ -16,6 +16,7 @@ const profiles = {
 let lastAppToken = null;
 let revokedAll = false;
 let grantsRevoked = 0;
+let reruns = 0;
 
 http.createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -129,7 +130,31 @@ http.createServer((req, res) => {
       { title: 'Bad link', html_url: 'javascript:alert(1)', number: 3, updated_at: '2026-11-03T00:00:00Z' },
     ]);
   }
-  if (url.pathname === '/repos/alice/app/actions/runs') return respond({ workflow_runs: [{ name: 'CI', head_branch: 'main', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/alice/app/actions/runs/1', updated_at: '2026-11-01T00:00:00Z' }] });
+  if (url.pathname === '/search/commits') {
+    if (!(url.searchParams.get('q') ?? '').includes('author:alice')) return respond({ items: [] });
+    return respond({ items: [{ html_url: 'https://github.com/alice/app/commit/abc', repository: { full_name: 'alice/app' }, commit: { message: 'Fix the login bug\n\nLonger details here', author: { date: '2026-11-05T10:00:00Z' } } }, { html_url: 'javascript:alert(1)', repository: { full_name: 'alice/app' }, commit: { message: 'Bad link', author: { date: '2026-11-05T09:00:00Z' } } }] });
+  }
+  if (url.pathname === '/repos/alice/app/commits') {
+    return respond([
+      { html_url: 'https://github.com/alice/app/commit/1', commit: { message: 'Add the new checkout\n\nDetails', author: { date: '2026-10-15T00:00:00Z' } } },
+      { html_url: 'https://github.com/alice/app/commit/2', commit: { message: 'Merge branch main', author: { date: '2026-10-16T00:00:00Z' } } },
+    ]);
+  }
+  if (req.method === 'POST' && url.pathname === '/repos/alice/app/actions/runs/1/rerun-failed-jobs') {
+    if (!bearer.startsWith('app-token-')) {
+      res.statusCode = 401;
+      return res.end('{}');
+    }
+    reruns += 1;
+    res.statusCode = 201;
+    return res.end('{}');
+  }
+  if (req.method === 'POST' && url.pathname === '/repos/alice/app/actions/runs/403/rerun-failed-jobs') {
+    res.statusCode = 403;
+    return res.end('{}');
+  }
+  if (req.url === '/__test/reruns') return respond({ reruns });
+  if (url.pathname === '/repos/alice/app/actions/runs') return respond({ workflow_runs: [{ id: 1, name: 'CI', head_branch: 'main', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/alice/app/actions/runs/1', updated_at: '2026-11-01T00:00:00Z' }] });
   if (url.pathname === '/users/alice') return respond({ name: 'Alice', public_repos: 3, followers: 5, following: 2 });
   if (url.pathname === '/users/alice/repos') return respond([{ full_name: 'alice/app', html_url: 'https://github.com/alice/app', description: 'An app', language: 'Go', stargazers_count: 9, pushed_at: '2026-11-01T00:00:00Z' }]);
   if (url.pathname === '/users/alice/events/public') return respond([{ type: 'PushEvent', repo: { name: 'alice/app' }, created_at: '2026-11-01T00:00:00Z' }]);

@@ -6,6 +6,7 @@ import { BANGS } from "@/lib/bangs";
 const SHORTCUTS = [
   { keys: ["⌘", "K"], label: "Open the command palette (Ctrl+K on Windows and Linux)" },
   { keys: ["/"], label: "Jump to search" },
+  { keys: ["s"], label: "Start or stop the timer" },
   { keys: ["t"], label: "Open the dev toolbox" },
   { keys: ["e"], label: "Turn edit mode on or off" },
   { keys: ["c"], label: "Open or close Customize" },

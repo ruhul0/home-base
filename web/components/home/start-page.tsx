@@ -1,19 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckIcon, CommandIcon, KeyboardIcon, LogOutIcon, PaletteIcon, PencilIcon, PlusIcon, RotateCcwIcon, ShieldIcon, WrenchIcon } from "lucide-react";
+import { BriefcaseIcon, CheckIcon, CommandIcon, FileTextIcon, FlaskConicalIcon, GitBranchIcon, KeyboardIcon, LogOutIcon, PaletteIcon, PencilIcon, PlayIcon, PlusIcon, RotateCcwIcon, RotateCwIcon, ShieldIcon, SquareIcon, TerminalIcon, TerminalSquareIcon, WrenchIcon } from "lucide-react";
+import { AttentionBar } from "@/components/dev/attention-bar";
 import { ClocksCard } from "@/components/dev/clocks-card";
 import { CommandPalette, type PaletteAction } from "@/components/dev/command-palette";
+import { CommandFillDialog, CommandsCard } from "@/components/dev/commands-card";
 import { GitHubCard } from "@/components/dev/github-card";
 import { NewsCard } from "@/components/dev/news-card";
+import { ProjectReportDialog } from "@/components/dev/project-report";
+import { ProjectsCard } from "@/components/dev/projects-card";
 import { ServersCard } from "@/components/dev/servers-card";
 import { ShortcutsDialog } from "@/components/dev/shortcuts-dialog";
+import { TimeCard } from "@/components/dev/time-card";
 import { ToolboxDialog } from "@/components/dev/toolbox-dialog";
+import { WorkLogCard } from "@/components/dev/worklog-card";
 import { WorkspaceCards } from "@/components/dev/workspace-cards";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api, ApiError, clearLocalSession, setToken, SignedOutError } from "@/lib/api";
 import { apiBase, isExtension, KEYS, storage } from "@/lib/browser";
+import { copyText, placeholdersIn } from "@/lib/commands";
 import { LOGIN_ERRORS, resumeWebLogin, startLogin, trySilentExtensionLogin } from "@/lib/login";
 import {
   applyPreferences,
@@ -23,7 +30,8 @@ import {
   readAsDataUrl,
   setBackgroundImage,
 } from "@/lib/preferences";
-import type { Group, GroupsResponse, Link, Preferences } from "@/lib/types";
+import type { Group, GroupsResponse, Link, Preferences, Project, SavedCommand } from "@/lib/types";
+import { useProjectStatus, useTimer, useWorkspace } from "@/lib/use-workspace";
 import { Clock } from "./clock";
 import { CustomizePanel } from "./customize-panel";
 import { Groups, SiteLink } from "./groups";
@@ -95,6 +103,9 @@ export function StartPage() {
   const [toolboxOpen, setToolboxOpen] = useState(false);
   const [toolboxTool, setToolboxTool] = useState<string | undefined>(undefined);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [paletteText, setPaletteText] = useState("");
+  const [reportProject, setReportProject] = useState<Project | null>(null);
+  const [fillingCommand, setFillingCommand] = useState<SavedCommand | null>(null);
 
   const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -235,11 +246,27 @@ export function StartPage() {
 
   const signedOutElsewhere = useCallback(() => void showSignedOut(), [showSignedOut]);
 
+  const { workspace, save: saveWorkspace } = useWorkspace(phase === "ready", signedOutElsewhere);
+  const projectList = workspace?.projects ?? [];
+  const projectStatus = useProjectStatus(phase === "ready" && workspace !== null, JSON.stringify(projectList), signedOutElsewhere);
+  const timer = useTimer(phase === "ready", signedOutElsewhere);
+  const toggleTimer = useRef<() => void>(() => {});
+  useEffect(() => {
+    toggleTimer.current = () => {
+      if (timer.running) void timer.stop();
+      else {
+        setPaletteText("start timer ");
+        setPaletteOpen(true);
+      }
+    };
+  }, [timer]);
+
   useEffect(() => {
     if (phase !== "ready") return;
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        setPaletteText("");
         setPaletteOpen((open) => !open);
         return;
       }
@@ -256,6 +283,7 @@ export function StartPage() {
         setToolboxOpen(true);
       } else if (event.key === "e") setEditing((value) => !value);
       else if (event.key === "c") setCustomizing((value) => !value);
+      else if (event.key === "s") toggleTimer.current();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -380,7 +408,44 @@ export function StartPage() {
     setToolboxOpen(true);
   }
 
+  function applyCommand(command: SavedCommand) {
+    if (placeholdersIn(command.command).length) setFillingCommand(command);
+    else void copyText(command.command, `Copied: ${command.name}`, toast);
+  }
+
+  async function rerunCI(repo: string, runId: number) {
+    try {
+      await api.dev.rerun(repo, runId);
+      toast.success(`Re-running the failed jobs in ${repo}.`);
+      void projectStatus.reload();
+    } catch (error) {
+      if (error instanceof SignedOutError) signedOutElsewhere();
+      else toast.error(error instanceof ApiError ? error.message : "That workflow couldn't be re-run.");
+    }
+  }
+
+  const open = (url: string) => () => {
+    location.href = url;
+  };
+  const projectActions: PaletteAction[] = projectList.flatMap((project) => {
+    const keywords = `${project.url} ${project.repo}`;
+    const failedRun = projectStatus.projects?.find(({ id }) => id === project.id)?.ci;
+    return [
+      { label: project.name, section: "Project", keywords, icon: BriefcaseIcon, run: open(project.url) },
+      { label: `Start timer: ${project.name}`, section: "Time", keywords, searchOnly: true, icon: PlayIcon, run: () => void timer.start(project.id) },
+      { label: `Report: ${project.name}`, section: "Project", keywords, searchOnly: true, icon: FileTextIcon, run: () => setReportProject(project) },
+      ...(project.staging ? [{ label: `Staging: ${project.name}`, section: "Project", keywords, searchOnly: true, icon: FlaskConicalIcon, run: open(project.staging) }] : []),
+      ...(project.repo ? [{ label: `Repo: ${project.name}`, section: "Project", keywords, searchOnly: true, icon: GitBranchIcon, run: open(`https://github.com/${project.repo}`) }] : []),
+      ...(project.ssh ? [{ label: `Copy SSH: ${project.name}`, section: "Project", keywords: `${keywords} ${project.ssh}`, searchOnly: true, icon: TerminalIcon, run: () => void copyText(project.ssh, `Copied: ${project.ssh}`, toast) }] : []),
+      ...(failedRun?.conclusion === "failure" ? [{ label: `Re-run failed CI: ${project.name}`, section: "Action", keywords, searchOnly: true, icon: RotateCwIcon, run: () => void rerunCI(failedRun.repo, failedRun.id) }] : []),
+    ];
+  });
+  const commandActions: PaletteAction[] = (workspace?.commands ?? []).map((command) => ({ label: command.name, section: "Command", keywords: command.command, searchOnly: true, icon: TerminalSquareIcon, run: () => applyCommand(command) }));
+
   const paletteActions: PaletteAction[] = [
+    ...(timer.running ? [{ label: "Stop the timer", section: "Time", shortcut: "s", icon: SquareIcon, run: () => void timer.stop() }] : []),
+    ...projectActions,
+    ...commandActions,
     ...TOOL_COMMANDS.map(({ tool, label, keywords }) => ({ label, section: "Toolbox", keywords, icon: WrenchIcon, run: () => openToolbox(tool) })),
     { label: "Customize this page", section: "Page", shortcut: "c", icon: PaletteIcon, run: () => setCustomizing(true) },
     { label: editing ? "Finish editing sites" : "Edit sites", section: "Page", shortcut: "e", icon: PencilIcon, run: () => setEditing(!editing) },
@@ -441,7 +506,7 @@ export function StartPage() {
                 <ShieldIcon /> Admin
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)} aria-label="Open the command palette">
+            <Button variant="ghost" size="sm" onClick={() => { setPaletteText(""); setPaletteOpen(true); }} aria-label="Open the command palette">
               <CommandIcon /> Commands <kbd className="kbd kbd-xs ml-0.5 text-base-content">⌘K</kbd>
             </Button>
             <Button variant="ghost" size="sm" onClick={() => openToolbox()}>
@@ -481,14 +546,20 @@ export function StartPage() {
               <SearchBox groups={groups} browserLinks={[...topSites, ...bookmarks]} engine={preferences.searchEngine} />
             )}
 
+            {preferences.showAttention && <AttentionBar projects={workspace ? projectStatus.projects : null} projectsFailed={projectStatus.failed} isAdmin={Boolean(user?.isAdmin)} onRerun={(repo, runId) => void rerunCI(repo, runId)} onSignedOut={signedOutElsewhere} />}
+
             <Groups groups={groups} editing={editing} onChange={changeGroups} />
 
-            {(preferences.showGitHub || preferences.showNews || preferences.showMonitors || preferences.showTodos || preferences.showNotes || preferences.showClocks) && (
+            {(preferences.showProjects || preferences.showWorkLog || preferences.showTime || preferences.showCommands || preferences.showGitHub || preferences.showNews || preferences.showMonitors || preferences.showTodos || preferences.showNotes || preferences.showClocks) && (
               <section className="home-widgets mt-5" aria-label="Developer panels">
+                {preferences.showProjects && <ProjectsCard workspace={workspace} save={saveWorkspace} projects={projectStatus.projects} loading={projectStatus.loading} onRefresh={() => void projectStatus.reload()} timer={timer} onReport={setReportProject} onRerun={(repo, runId) => void rerunCI(repo, runId)} />}
+                {preferences.showWorkLog && <WorkLogCard projects={projectList} onSignedOut={signedOutElsewhere} />}
+                {preferences.showTime && <TimeCard projects={projectList} timer={timer} />}
+                {preferences.showCommands && <CommandsCard workspace={workspace} save={saveWorkspace} onUse={applyCommand} />}
                 {preferences.showClocks && <ClocksCard />}
                 {user?.isAdmin && preferences.showServers && <ServersCard onSignedOut={signedOutElsewhere} />}
                 {preferences.showGitHub && <GitHubCard onSignedOut={signedOutElsewhere} />}
-                <WorkspaceCards preferences={preferences} onSignedOut={signedOutElsewhere} />
+                <WorkspaceCards preferences={preferences} workspace={workspace} save={saveWorkspace} projectsDown={(projectStatus.projects ?? []).filter(({ monitor }) => !monitor.up).map(({ url }) => url)} onSignedOut={signedOutElsewhere} />
                 {preferences.showNews && <NewsCard onSignedOut={signedOutElsewhere} />}
               </section>
             )}
@@ -524,7 +595,9 @@ export function StartPage() {
         </div>
       </div>
 
-      <CommandPalette open={paletteOpen} groups={groups} actions={paletteActions} onOpenChange={setPaletteOpen} />
+      <CommandPalette open={paletteOpen} groups={groups} actions={paletteActions} initialText={paletteText} onOpenChange={setPaletteOpen} />
+      {reportProject && <ProjectReportDialog project={reportProject} onClose={() => setReportProject(null)} />}
+      {fillingCommand && <CommandFillDialog command={fillingCommand} projects={projectList} onClose={() => setFillingCommand(null)} />}
       {toolboxOpen && <ToolboxDialog open tool={toolboxTool} onOpenChange={setToolboxOpen} />}
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
 

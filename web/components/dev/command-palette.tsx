@@ -13,14 +13,16 @@ export interface PaletteAction {
   section: string;
   keywords?: string;
   shortcut?: string;
+  /** Only listed once something is typed, so the list stays short. */
+  searchOnly?: boolean;
   icon: React.ComponentType<{ className?: string }>;
   run: () => void;
 }
 
 const MAX_ITEMS = 40;
 
-function PaletteBody({ groups, actions, onClose }: { groups: Group[]; actions: PaletteAction[]; onClose: () => void }) {
-  const [text, setText] = useState("");
+function PaletteBody({ groups, actions, initialText, onClose }: { groups: Group[]; actions: PaletteAction[]; initialText: string; onClose: () => void }) {
+  const [text, setText] = useState(initialText);
   const [active, setActive] = useState(0);
 
   const items = useMemo(() => {
@@ -33,7 +35,8 @@ function PaletteBody({ groups, actions, onClose }: { groups: Group[]; actions: P
       group.links.map((link) => ({ label: link.name, section: group.name, keywords: link.url, icon: GlobeIcon, run: open(link.url) })),
     );
     const all = [...actions, ...siteActions];
-    const matches = needle ? all.filter((item) => `${item.label} ${item.section} ${item.keywords ?? ""}`.toLowerCase().includes(needle)) : all;
+    const words = needle.split(/\s+/);
+    const matches = needle ? all.filter((item) => words.every((word) => `${item.label} ${item.section} ${item.keywords ?? ""}`.toLowerCase().includes(word))) : all.filter((item) => !item.searchOnly);
 
     const extras: PaletteAction[] = [];
     const bang = matchBang(text);
@@ -106,11 +109,13 @@ export function CommandPalette({
   open,
   groups,
   actions,
+  initialText = "",
   onOpenChange,
 }: {
   open: boolean;
   groups: Group[];
   actions: PaletteAction[];
+  initialText?: string;
   onOpenChange: (open: boolean) => void;
 }) {
   return (
@@ -120,7 +125,7 @@ export function CommandPalette({
           <DialogTitle>Command palette</DialogTitle>
           <DialogDescription>Search your sites, tools and actions.</DialogDescription>
         </DialogHeader>
-        {open && <PaletteBody groups={groups} actions={actions} onClose={() => onOpenChange(false)} />}
+        {open && <PaletteBody groups={groups} actions={actions} initialText={initialText} onClose={() => onOpenChange(false)} />}
       </DialogContent>
     </Dialog>
   );

@@ -50,6 +50,7 @@ var preferenceSwitches = []string{
 	"showClock", "showSeconds", "showGreeting", "showDate", "showSearch",
 	"showLabels", "showGroupTitles", "showMostVisited", "showBookmarks",
 	"showGitHub", "showNews", "showMonitors", "showTodos", "showNotes", "showClocks", "showServers",
+	"showAttention", "showProjects", "showCommands", "showTime", "showWorkLog",
 }
 
 var backgroundDims = []float64{0, 20, 40, 60}

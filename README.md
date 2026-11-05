@@ -6,6 +6,13 @@ A self-hosted start page for developers: a command palette, search shortcuts, Gi
 
 - **Command palette and shortcuts:** press `⌘K`, or use `/`, `t`, `e`, `c` and `?`. Search shortcuts include `gh`, `npm`, `mdn`, `so`, `pypi`, `go`, `crates` and `docker`.
 - **GitHub panel:** pull requests, issues, repositories, activity and CI status. Sign-in only reads public data. Users can opt in to a read-only GitHub App to add private repositories and review requests.
+- **Needs attention:** one list of down sites, failed CI, review requests, full disks, and SSL and domain expiry at 30, 14 and 7 days. It says "All clear" only when everything was actually checked.
+- **Projects:** a card per client with production and staging links, repository, CI, uptime, SSL and domain dates and a copyable SSH command, all reachable from `⌘K`.
+- **Client reports:** monthly uptime, outages, shipped commits and optional tracked time, as Markdown. Nothing is sent automatically.
+- **Command library:** saved commands with `{placeholders}`, copied from `⌘K`. Nothing runs from the page.
+- **Time tracking:** one timer per user, started and stopped with `s`, with CSV export.
+- **Work log:** a day's commits, pull requests, workflow runs and tracked time, ready to copy for a standup.
+- **Re-run failed CI:** optional. It works only if you give the GitHub App the Actions read and write permission.
 - **Uptime monitors:** background checks with history and uptime percentages, refusing private addresses.
 - **Server health:** an optional agent reports disk, memory, load and container status to an admin-only panel.
 - **Dev toolbox:** JSON, JWT, Base64, URL encoding, timestamps, UUIDs, hashes and regex, all in the browser.

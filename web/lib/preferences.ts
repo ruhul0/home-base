@@ -38,6 +38,11 @@ export const DEFAULT_PREFERENCES: Preferences = {
   showNotes: true,
   showClocks: true,
   showServers: true,
+  showAttention: true,
+  showProjects: true,
+  showCommands: true,
+  showTime: true,
+  showWorkLog: true,
 };
 
 export const DAISY_THEMES = [

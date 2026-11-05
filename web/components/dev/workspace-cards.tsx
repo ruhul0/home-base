@@ -7,35 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { api, ApiError, SignedOutError } from "@/lib/api";
+import { api, SignedOutError } from "@/lib/api";
 import { normalizeUrl } from "@/lib/links";
 import type { MonitorResult, Preferences, Workspace } from "@/lib/types";
+import type { SaveWorkspace } from "@/lib/use-workspace";
 import { DevCard, DevMessage, timeAgo } from "./dev-card";
 
-const SAVE_DELAY_MS = 600;
 const MONITOR_REFRESH_MS = 60 * 1000;
 const MAX_MONITORS = 10;
 const PAGE_TITLE = "New Tab";
-
-/**
- * Combines two versions of a workspace, so edits made on two devices at once are both kept.
- * Lists are combined, and a note edited in both places keeps both copies.
- */
-function mergeWorkspaces(local: Workspace, remote: Workspace): Workspace {
-  const monitors = [...remote.monitors];
-  for (const monitor of local.monitors) {
-    if (!monitors.some((item) => item.url === monitor.url)) monitors.push(monitor);
-  }
-  const todos = remote.todos.map((todo) => local.todos.find((item) => item.text === todo.text) ?? todo);
-  for (const todo of local.todos) {
-    if (!todos.some((item) => item.text === todo.text)) todos.push(todo);
-  }
-  let notes = local.notes;
-  if (remote.notes !== local.notes && !local.notes.includes(remote.notes)) {
-    notes = local.notes ? `${remote.notes}\n\n--- from another device ---\n${local.notes}` : remote.notes;
-  }
-  return { version: remote.version, monitors: monitors.slice(0, MAX_MONITORS), todos: todos.slice(0, 100), notes: notes.slice(0, 20000) };
-}
 
 function HistoryBars({ result }: { result: MonitorResult }) {
   const points = result.history?.points ?? [];
@@ -49,19 +29,26 @@ function HistoryBars({ result }: { result: MonitorResult }) {
   );
 }
 
-export function WorkspaceCards({ preferences, onSignedOut }: { preferences: Preferences; onSignedOut: () => void }) {
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+export function WorkspaceCards({
+  preferences,
+  workspace,
+  save,
+  projectsDown,
+  onSignedOut,
+}: {
+  preferences: Preferences;
+  workspace: Workspace | null;
+  save: SaveWorkspace;
+  projectsDown: string[];
+  onSignedOut: () => void;
+}) {
   const [results, setResults] = useState<MonitorResult[]>([]);
   const [checking, setChecking] = useState(false);
   const [newTodo, setNewTodo] = useState("");
   const [monitorName, setMonitorName] = useState("");
   const [monitorUrl, setMonitorUrl] = useState("");
   const [monitorError, setMonitorError] = useState("");
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
-  const version = useRef(0);
   const knownDown = useRef<Set<string> | null>(null);
-  const hasPendingSave = useRef(false);
 
   const reportError = useCallback(
     (error: unknown, message: string) => {
@@ -81,11 +68,10 @@ export function WorkspaceCards({ preferences, onSignedOut }: { preferences: Pref
       const down = new Set(latest.filter((result) => !result.up).map((result) => result.url));
       if (knownDown.current) {
         for (const result of latest) {
-          if (!result.up && !knownDown.current.has(result.url)) toast.error(`${result.name} is down. ${result.problem ?? ""}`);
+          if (!result.up && !knownDown.current.has(result.url)) toast.error(`${result.name} is down. ${result.problem ?? ""}`, { id: `down-${result.url}` });
         }
       }
       knownDown.current = down;
-      document.title = down.size ? `(${down.size} down) ${PAGE_TITLE}` : PAGE_TITLE;
     } catch (error) {
       reportError(error, "Your monitors couldn't be checked.");
     } finally {
@@ -93,76 +79,25 @@ export function WorkspaceCards({ preferences, onSignedOut }: { preferences: Pref
     }
   }, [reportError]);
 
+  const hasWorkspace = workspace !== null;
   useEffect(() => {
-    const start = setTimeout(() => {
-      api.dev
-        .workspace()
-        .then((loaded) => {
-          version.current = loaded.version;
-          setWorkspace(loaded);
-          if (loaded.monitors.length) void checkMonitors();
-        })
-        .catch((error) => reportError(error, "Your workspace couldn't be loaded."));
-    }, 0);
+    if (!hasWorkspace) return;
+    const start = setTimeout(() => void checkMonitors(), 0);
     const timer = setInterval(() => void checkMonitors(), MONITOR_REFRESH_MS);
-
-    // Coming back to the tab picks up anything changed on another device.
-    const onFocus = () => {
-      if (hasPendingSave.current) return;
-      api.dev
-        .workspace()
-        .then((loaded) => {
-          if (!hasPendingSave.current && loaded.version !== version.current) {
-            version.current = loaded.version;
-            setWorkspace(loaded);
-          }
-        })
-        .catch(() => {});
-    };
-    window.addEventListener("focus", onFocus);
     return () => {
       clearTimeout(start);
       clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
+    };
+  }, [checkMonitors, hasWorkspace]);
+
+  // Alerts live on the page: the tab title counts every monitor and project that's down.
+  const downSignature = [...new Set([...results.filter((result) => !result.up).map((result) => result.url), ...projectsDown])].length;
+  useEffect(() => {
+    document.title = downSignature ? `(${downSignature} down) ${PAGE_TITLE}` : PAGE_TITLE;
+    return () => {
       document.title = PAGE_TITLE;
     };
-  }, [checkMonitors, reportError]);
-
-  /** Saves run in order. Typing waits for a pause, and list changes save straight away. */
-  function save(next: Workspace, immediately: boolean): Promise<unknown> {
-    setWorkspace(next);
-    clearTimeout(saveTimer.current);
-    hasPendingSave.current = true;
-    const send = () => {
-      saveQueue.current = saveQueue.current.then(async () => {
-        try {
-          const saved = await api.dev.putWorkspace({ ...next, version: version.current });
-          version.current = saved.version;
-        } catch (error) {
-          if (!(error instanceof ApiError) || error.status !== 409) {
-            reportError(error, "Your workspace couldn't be saved. Check your connection and try again.");
-            return;
-          }
-          // Another device saved first, so combine both sets of changes rather than losing either.
-          try {
-            const merged = mergeWorkspaces(next, await api.dev.workspace());
-            const saved = await api.dev.putWorkspace(merged);
-            version.current = saved.version;
-            setWorkspace({ ...merged, version: saved.version });
-            toast.info("Your workspace changed on another device, so both sets of changes were combined.");
-          } catch (mergeError) {
-            reportError(mergeError, "Your workspace couldn't be saved. Reload the page and try again.");
-          }
-        } finally {
-          hasPendingSave.current = false;
-        }
-      });
-      return saveQueue.current;
-    };
-    if (immediately) return send();
-    saveTimer.current = setTimeout(send, SAVE_DELAY_MS);
-    return Promise.resolve();
-  }
+  }, [downSignature]);
 
   function addTodo(event: React.FormEvent) {
     event.preventDefault();

@@ -111,17 +111,24 @@ type DevServices struct {
 	news          *cached[[]NewsStory]
 	monitors      *cached[MonitorResult]
 	client        *http.Client
+	dialer        *net.Dialer
+	projectCI     *cached[*GitHubRun]
+	workLogs      *cached[WorkLog]
 }
 
 func newDevServices() *DevServices {
+	dialer := newMonitorDialer()
 	return &DevServices{
+		dialer:        dialer,
+		projectCI:     newCached[*GitHubRun](),
+		workLogs:      newCached[WorkLog](),
 		github:        newCached[GitHubDashboard](),
 		private:       newCached[GitHubDashboard](),
 		connectStates: newExpiring[connectState](),
 		tokenLocks:    &userLocks{locks: map[int64]*sync.Mutex{}},
 		news:          newCached[[]NewsStory](),
 		monitors:      newCached[MonitorResult](),
-		client:        newMonitorClient(),
+		client:        newMonitorClient(dialer),
 	}
 }
 
@@ -134,6 +141,7 @@ func (a *App) registerDevRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/dev/workspace", a.signedIn(a.handleGetWorkspace))
 	mux.HandleFunc("PUT /api/dev/workspace", a.signedIn(a.handlePutWorkspace))
 	mux.HandleFunc("GET /api/dev/monitors", a.signedIn(a.handleDevMonitors))
+	a.registerProjectRoutes(mux)
 
 	mux.HandleFunc("GET /api/admin/servers", a.adminOnly(a.handleAdminServers))
 	mux.HandleFunc("POST /api/admin/servers", a.adminOnly(a.handleAdminAddServer))
@@ -168,6 +176,7 @@ type GitHubItem struct {
 
 // GitHubRun is the latest CI run of a repository.
 type GitHubRun struct {
+	ID         int64  `json:"id"`
 	Repo       string `json:"repo"`
 	Workflow   string `json:"workflow"`
 	Branch     string `json:"branch"`
@@ -196,6 +205,7 @@ func latestRuns(ctx context.Context, token string, repos []GitHubRepo) ([]GitHub
 			}
 			var found struct {
 				WorkflowRuns []struct {
+					ID         int64  `json:"id"`
 					Name       string `json:"name"`
 					HeadBranch string `json:"head_branch"`
 					Status     string `json:"status"`
@@ -216,7 +226,7 @@ func latestRuns(ctx context.Context, token string, repos []GitHubRepo) ([]GitHub
 			}
 			run := found.WorkflowRuns[0]
 			if link := safeLink(run.HTMLURL); link != "" {
-				runs = append(runs, GitHubRun{Repo: repo.Name, Workflow: run.Name, Branch: run.HeadBranch, Status: run.Status, Conclusion: run.Conclusion, URL: link, UpdatedAt: run.UpdatedAt})
+				runs = append(runs, GitHubRun{ID: run.ID, Repo: repo.Name, Workflow: run.Name, Branch: run.HeadBranch, Status: run.Status, Conclusion: run.Conclusion, URL: link, UpdatedAt: run.UpdatedAt})
 			}
 		}()
 	}
@@ -569,14 +579,23 @@ type Todo struct {
 
 // Workspace is the user's own notes, todos and monitors.
 type Workspace struct {
-	Version  int       `json:"version"`
-	Monitors []Monitor `json:"monitors"`
-	Todos    []Todo    `json:"todos"`
-	Notes    string    `json:"notes"`
+	Projects []Project      `json:"projects"`
+	Commands []SavedCommand `json:"commands"`
+	Version  int            `json:"version"`
+	Monitors []Monitor      `json:"monitors"`
+	Todos    []Todo         `json:"todos"`
+	Notes    string         `json:"notes"`
 }
 
 func cleanWorkspace(input Workspace) (Workspace, bool) {
-	cleaned := Workspace{Version: input.Version, Monitors: []Monitor{}, Todos: []Todo{}, Notes: input.Notes}
+	cleaned := Workspace{Version: input.Version, Monitors: []Monitor{}, Todos: []Todo{}, Projects: []Project{}, Commands: []SavedCommand{}, Notes: input.Notes}
+	projects, projectsOK := cleanProjects(input.Projects)
+	commands, commandsOK := cleanCommands(input.Commands)
+	if !projectsOK || !commandsOK {
+		return cleaned, false
+	}
+	cleaned.Projects = projects
+	cleaned.Commands = commands
 	if len(input.Monitors) > maxMonitors || len(input.Todos) > maxTodos || utf8.RuneCountInString(input.Notes) > maxNotesLength {
 		return cleaned, false
 	}
@@ -599,7 +618,7 @@ func cleanWorkspace(input Workspace) (Workspace, bool) {
 }
 
 func (s *Store) getWorkspace(ctx context.Context, userID int64) (Workspace, error) {
-	workspace := Workspace{Monitors: []Monitor{}, Todos: []Todo{}}
+	workspace := Workspace{Monitors: []Monitor{}, Todos: []Todo{}, Projects: []Project{}, Commands: []SavedCommand{}}
 	var data string
 	var version int
 	err := s.db.QueryRowContext(ctx, "SELECT data, version FROM user_workspaces WHERE user_id = ?", userID).Scan(&data, &version)
@@ -611,6 +630,12 @@ func (s *Store) getWorkspace(ctx context.Context, userID int64) (Workspace, erro
 	}
 	err = json.Unmarshal([]byte(data), &workspace)
 	workspace.Version = version
+	if workspace.Projects == nil {
+		workspace.Projects = []Project{}
+	}
+	if workspace.Commands == nil {
+		workspace.Commands = []SavedCommand{}
+	}
 	return workspace, err
 }
 
@@ -656,6 +681,20 @@ func (a *App) handlePutWorkspace(w http.ResponseWriter, r *http.Request, current
 	if !readJSON(w, r, &input, invalid) {
 		return
 	}
+	// An older copy of the page doesn't know about these lists, and mustn't wipe them when it saves.
+	if input.Projects == nil || input.Commands == nil {
+		existing, err := a.store.getWorkspace(r.Context(), current.userID)
+		if err != nil {
+			writeServerError(w, err)
+			return
+		}
+		if input.Projects == nil {
+			input.Projects = existing.Projects
+		}
+		if input.Commands == nil {
+			input.Commands = existing.Commands
+		}
+	}
 	workspace, ok := cleanWorkspace(input)
 	if !ok {
 		writeError(w, http.StatusBadRequest, invalid)
@@ -685,11 +724,11 @@ func isBlockedAddress(ip net.IP) bool {
 // newMonitorClient makes the server's outside checks safe to run on user-supplied addresses. The
 // check happens on the resolved IP at connection time, including after redirects, so a domain that
 // points at a private address is refused too. Only the normal web ports can be reached.
-func newMonitorClient() *http.Client {
-	dialer := &net.Dialer{
+func newMonitorDialer() *net.Dialer {
+	return &net.Dialer{
 		Timeout: monitorTimeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
-			if os.Getenv("MONITOR_ALLOW_PRIVATE") == "true" {
+			if dialerAllowsPrivate() {
 				return nil
 			}
 			host, port, err := net.SplitHostPort(address)
@@ -706,6 +745,9 @@ func newMonitorClient() *http.Client {
 			return nil
 		},
 	}
+}
+
+func newMonitorClient(dialer *net.Dialer) *http.Client {
 	return &http.Client{
 		Timeout: monitorTimeout,
 		Transport: &http.Transport{

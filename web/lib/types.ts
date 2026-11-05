@@ -57,6 +57,11 @@ export interface Preferences {
   showNotes: boolean;
   showClocks: boolean;
   showServers: boolean;
+  showAttention: boolean;
+  showProjects: boolean;
+  showCommands: boolean;
+  showTime: boolean;
+  showWorkLog: boolean;
 }
 
 export interface GitHubItem {
@@ -74,7 +79,7 @@ export interface GitHubDashboard {
   followers: number;
   following: number;
   reviewRequests: GitHubItem[];
-  ci: { repo: string; workflow: string; branch: string; status: string; conclusion: string; url: string; updatedAt: string }[];
+  ci: { id: number; repo: string; workflow: string; branch: string; status: string; conclusion: string; url: string; updatedAt: string }[];
   ciNeedsPermission: boolean;
   repos: { private: boolean; name: string; url: string; description: string; language: string; stars: number; pushedAt: string }[];
   pullRequests: GitHubItem[];
@@ -162,6 +167,76 @@ export interface Workspace {
   monitors: Monitor[];
   todos: Todo[];
   notes: string;
+  projects: Project[];
+  commands: SavedCommand[];
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  url: string;
+  staging: string;
+  repo: string;
+  ssh: string;
+  notes: string;
+}
+
+export interface SavedCommand {
+  id: string;
+  name: string;
+  command: string;
+}
+
+export interface GitHubRun {
+  id: number;
+  repo: string;
+  workflow: string;
+  branch: string;
+  status: string;
+  conclusion: string;
+  url: string;
+  updatedAt: string;
+}
+
+export interface ProjectStatus extends Project {
+  monitor: MonitorResult;
+  certificateExpires: string | null;
+  domainExpires: string | null;
+  ci: GitHubRun | null;
+}
+
+export interface TimeEntry {
+  id: number;
+  projectId: string;
+  note: string;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export interface WorkLogCommit {
+  repo: string;
+  message: string;
+  url: string;
+  date: string;
+}
+
+export interface WorkLog {
+  commits: WorkLogCommit[];
+  pullRequests: GitHubItem[];
+  runs: GitHubRun[];
+  partial: boolean;
+}
+
+export interface ProjectReport {
+  project: Project;
+  month: string;
+  checks: number;
+  uptime: number | null;
+  averageMs: number | null;
+  incidents: { startedAt: string; endedAt: string | null; problem: string }[];
+  commits: WorkLogCommit[];
+  commitsAvailable: boolean;
+  trackedSeconds: number;
 }
 
 export interface AdminTotals {

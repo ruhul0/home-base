@@ -10,7 +10,11 @@ import type {
   MonitorResult,
   NewsStory,
   Preferences,
+  ProjectReport,
+  ProjectStatus,
   SessionInfo,
+  TimeEntry,
+  WorkLog,
   Workspace,
 } from "./types";
 
@@ -54,6 +58,12 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
   return data as T;
 }
 
+/** The server takes whole seconds. */
+function timeRange(from: Date, to: Date) {
+  const stamp = (date: Date) => encodeURIComponent(date.toISOString().replace(/\.\d+Z$/, "Z"));
+  return `from=${stamp(from)}&to=${stamp(to)}`;
+}
+
 export const api = {
   exchange: (code: string, verifier: string) =>
     request<{ token: string }>("/api/auth/exchange", "POST", { code, verifier }),
@@ -86,6 +96,14 @@ export const api = {
     workspace: () => request<Workspace>("/api/dev/workspace"),
     putWorkspace: (workspace: Workspace) => request<{ version: number }>("/api/dev/workspace", "PUT", workspace),
     monitors: () => request<{ results: MonitorResult[] }>("/api/dev/monitors"),
+    projects: () => request<{ projects: ProjectStatus[] }>("/api/dev/projects"),
+    report: (id: string, month: string) => request<ProjectReport>(`/api/dev/projects/${encodeURIComponent(id)}/report?month=${encodeURIComponent(month)}`),
+    timeEntries: (from: Date, to: Date) => request<{ entries: TimeEntry[] }>(`/api/dev/time?${timeRange(from, to)}`),
+    startTimer: (projectId: string, note: string) => request("/api/dev/time/start", "POST", { projectId, note }),
+    stopTimer: () => request("/api/dev/time/stop", "POST"),
+    deleteTimeEntry: (id: number) => request(`/api/dev/time/${id}`, "DELETE"),
+    workLog: (from: Date, to: Date) => request<{ log: WorkLog; entries: TimeEntry[] }>(`/api/dev/worklog?${timeRange(from, to)}`),
+    rerun: (repo: string, runId: number) => request("/api/dev/github/rerun", "POST", { repo, runId }),
   },
   sessions: {
     list: () => request<{ sessions: SessionInfo[] }>("/api/sessions"),

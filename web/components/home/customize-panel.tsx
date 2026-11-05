@@ -243,6 +243,11 @@ export function CustomizePanel({
 
             <div className="grid gap-3">
               <Label>Developer panels</Label>
+              <SwitchField label="Needs attention" checked={preferences.showAttention} onChange={(value) => onSet("showAttention", value)} />
+              <SwitchField label="Projects" checked={preferences.showProjects} onChange={(value) => onSet("showProjects", value)} />
+              <SwitchField label="Work log" checked={preferences.showWorkLog} onChange={(value) => onSet("showWorkLog", value)} />
+              <SwitchField label="Time tracking" checked={preferences.showTime} onChange={(value) => onSet("showTime", value)} />
+              <SwitchField label="Command library" checked={preferences.showCommands} onChange={(value) => onSet("showCommands", value)} />
               <SwitchField label="GitHub" checked={preferences.showGitHub} onChange={(value) => onSet("showGitHub", value)} />
               <SwitchField label="Monitors" checked={preferences.showMonitors} onChange={(value) => onSet("showMonitors", value)} />
               <SwitchField label="Todos" checked={preferences.showTodos} onChange={(value) => onSet("showTodos", value)} />

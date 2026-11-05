@@ -424,7 +424,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall(`/admin/users/${bobRow.id}`, { token: fresh.owner, method: 'DELETE' });
   check('deleting a missing user reported', r.status === 404, r.status);
 
-  const withoutVersion = ({ version, ...rest }) => rest;
+  const withoutVersion = ({ version, projects, commands, ...rest }) => rest;
   const dev = { alice: (await signIn('code-alice')).token, owner: (await signIn('code-owner-renamed')).token };
   for (const path of ['/dev/github', '/dev/news', '/dev/workspace', '/dev/monitors']) {
     r = await apiCall(path);
@@ -677,6 +677,117 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   check('disconnecting revokes the grant on GitHub', (await fakeGitHub('/__test/last-token')).grantsRevoked === revokedBefore + 1);
   r = await apiCall('/dev/github', { token: dev.alice });
   check('disconnecting removes private data straight away', r.data.connected === false && !JSON.stringify(r.data).includes('secret-project'), JSON.stringify(r.data).slice(0, 200));
+
+  const siteProject = { id: 'site-1', name: 'Client site', url: 'http://fake-github:4000/up', staging: 'https://staging.example.com/', repo: 'alice/app', ssh: 'ssh deploy@example.com', notes: 'Renews in March' };
+  const saveCommand = { id: 'cmd-1', name: 'Tail logs', command: 'ssh {server} docker logs -f app' };
+  let workspaceNow = (await apiCall('/dev/workspace', { token: dev.alice })).data;
+  r = await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: { ...workspaceNow, projects: [siteProject], commands: [saveCommand] } });
+  check('projects and commands save', r.status === 200, JSON.stringify(r.data));
+  workspaceNow = (await apiCall('/dev/workspace', { token: dev.alice })).data;
+  check('projects and commands persist', workspaceNow.projects[0].repo === 'alice/app' && workspaceNow.commands[0].command === saveCommand.command, JSON.stringify(workspaceNow).slice(0, 200));
+  r = await apiCall('/dev/workspace', { token: dev.owner });
+  check("projects stay private to each user", r.data.projects.length === 0 && r.data.commands.length === 0, JSON.stringify(r.data).slice(0, 120));
+  for (const [label, change] of [
+    ['script project address', { projects: [{ ...siteProject, url: 'javascript:alert(1)' }] }],
+    ['script staging address', { projects: [{ ...siteProject, staging: 'javascript:alert(1)' }] }],
+    ['bad project id', { projects: [{ ...siteProject, id: '<script>' }] }],
+    ['bad repo name', { projects: [{ ...siteProject, repo: '../../etc' }] }],
+    ['too many projects', { projects: new Array(51).fill(siteProject) }],
+    ['oversized command', { commands: [{ ...saveCommand, command: 'x'.repeat(2001) }] }],
+    ['empty command', { commands: [{ ...saveCommand, command: ' ' }] }],
+    ['too many commands', { commands: new Array(201).fill(saveCommand) }],
+  ]) {
+    r = await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: { ...workspaceNow, ...change } });
+    check(`${label} refused`, r.status === 400, r.status);
+  }
+
+  const { projects: keptProjects, commands: keptCommands, ...olderClient } = workspaceNow;
+  r = await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: olderClient });
+  workspaceNow = (await apiCall('/dev/workspace', { token: dev.alice })).data;
+  check("an older page saving doesn't wipe projects or commands", r.status === 200 && workspaceNow.projects.length === keptProjects.length && workspaceNow.commands.length === keptCommands.length, JSON.stringify(workspaceNow).slice(0, 200));
+
+  await connection.query("INSERT INTO site_expiry (host, certificate_expires, domain_expires, checked_at) VALUES ('fake-github', '2026-11-20 00:00:00', '2027-01-01 00:00:00', UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE certificate_expires = VALUES(certificate_expires), domain_expires = VALUES(domain_expires), checked_at = VALUES(checked_at)");
+  r = await apiCall('/dev/projects');
+  check('project status needs sign-in', r.status === 401, r.status);
+  base = MONITORS;
+  r = await apiCall('/dev/projects', { token: dev.alice });
+  const projectStatus = r.data.projects?.[0];
+  check('project cards show live status', projectStatus?.monitor.up === true && projectStatus.monitor.status === 200, JSON.stringify(projectStatus).slice(0, 300));
+  check('project cards show SSL and domain dates', projectStatus?.certificateExpires?.startsWith('2026-11-20') && projectStatus.domainExpires.startsWith('2027-01-01'), JSON.stringify(projectStatus).slice(0, 300));
+  check('project cards show CI', projectStatus?.ci?.conclusion === 'failure' && projectStatus.ci.id === 1, JSON.stringify(projectStatus?.ci));
+  r = await apiCall('/dev/projects', { token: dev.owner });
+  check("another user doesn't see those projects", r.data.projects.length === 0, JSON.stringify(r.data).slice(0, 100));
+
+  let rollup = [];
+  for (let attempt = 0; attempt < 20 && !rollup.length; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    [rollup] = await connection.query("SELECT checks, up_checks FROM monitor_daily d WHERE d.url_hash = SHA2('http://fake-github:4000/up', 256)");
+  }
+  check('background checks build long-term history', rollup[0]?.checks > 0 && rollup[0].checks === rollup[0].up_checks, JSON.stringify(rollup));
+  let incidents = [];
+  for (let attempt = 0; attempt < 20 && !incidents.length; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    [incidents] = await connection.query("SELECT problem, ended_at FROM monitor_incidents WHERE url_hash = SHA2('http://fake-github:4000/down', 256)");
+  }
+  check('a failing site opens one incident', incidents.length === 1 && incidents[0].ended_at === null && incidents[0].problem === 'Returned HTTP 500.', JSON.stringify(incidents));
+  base = MAIN;
+
+  r = await apiCall('/dev/time/start', { token: dev.alice, method: 'POST', body: { projectId: 'site-1', note: 'Checkout work' } });
+  check('a timer starts', r.status === 200, r.status);
+  r = await apiCall('/dev/time/start', { token: dev.alice, method: 'POST', body: { projectId: '<bad>', note: '' } });
+  check('a bad project id is refused for timers', r.status === 400, r.status);
+  r = await apiCall('/dev/time/start', { token: dev.alice, method: 'POST', body: { projectId: 'site-1', note: 'Second task' } });
+  const timeRange = `from=${encodeURIComponent(new Date(Date.now() - 86400000).toISOString().replace(/\.\d+/, ''))}&to=${encodeURIComponent(new Date(Date.now() + 86400000).toISOString().replace(/\.\d+/, ''))}`;
+  r = await apiCall(`/dev/time?${timeRange}`, { token: dev.alice });
+  check('only one timer can run', r.data.entries.length === 2 && r.data.entries.filter((entry) => entry.endedAt === null).length === 1, JSON.stringify(r.data.entries));
+  r = await apiCall('/dev/time/stop', { token: dev.alice, method: 'POST' });
+  r = await apiCall(`/dev/time?${timeRange}`, { token: dev.alice });
+  check('a timer stops', r.data.entries.every((entry) => entry.endedAt !== null), JSON.stringify(r.data.entries));
+  const entryId = r.data.entries[0].id;
+  r = await apiCall(`/dev/time/${entryId}`, { token: dev.owner, method: 'DELETE' });
+  check("users can't delete someone else's time", r.status === 404, r.status);
+  r = await apiCall(`/dev/time/${entryId}`, { token: dev.alice, method: 'DELETE' });
+  check('users can delete their own time', r.status === 200, r.status);
+  r = await apiCall('/dev/time?from=bad&to=worse', { token: dev.alice });
+  check('a bad date range is refused', r.status === 400, r.status);
+
+  r = await apiCall(`/dev/worklog?${timeRange}`, { token: dev.alice });
+  check('the work log lists commits by first line', r.status === 200 && r.data.log.commits[0]?.message === 'Fix the login bug' && r.data.log.commits[0].repo === 'alice/app', JSON.stringify(r.data).slice(0, 300));
+  check('the work log lists workflow runs', r.data.log.runs.length === 1 && r.data.log.runs[0].repo === 'alice/app', JSON.stringify(r.data.log.runs));
+  check('the work log drops unsafe links', !JSON.stringify(r.data).includes('javascript:'));
+
+  await connection.query("INSERT INTO monitor_daily (url_hash, day, checks, up_checks, total_ms) VALUES (SHA2('http://fake-github:4000/up', 256), '2026-10-10', 100, 99, 5000)");
+  await connection.query("INSERT INTO monitor_incidents (url_hash, started_at, ended_at, problem) VALUES (SHA2('http://fake-github:4000/up', 256), '2026-10-10 10:00:00', '2026-10-10 10:30:00', 'Returned HTTP 502.')");
+  const aliceUserId = (await connection.query("SELECT id FROM users WHERE login = 'alice'"))[0][0].id;
+  await connection.query('INSERT INTO time_entries (user_id, project_id, note, started_at, ended_at) VALUES (?, ?, ?, ?, ?)', [aliceUserId, 'site-1', 'Report work', '2026-10-11 09:00:00', '2026-10-11 10:30:00']);
+  r = await apiCall('/dev/projects/site-1/report?month=2026-10', { token: dev.alice });
+  check('reports show uptime and speed', r.status === 200 && r.data.uptime === 99 && r.data.averageMs === 50 && r.data.checks === 100, JSON.stringify(r.data).slice(0, 300));
+  check('reports list incidents', r.data.incidents.length === 1 && r.data.incidents[0].problem === 'Returned HTTP 502.', JSON.stringify(r.data.incidents));
+  check('reports list shipped work without merges', r.data.commits.length === 1 && r.data.commits[0].message === 'Add the new checkout' && r.data.commitsAvailable === true, JSON.stringify(r.data.commits));
+  check('reports include tracked time', r.data.trackedSeconds === 5400, r.data.trackedSeconds);
+  r = await apiCall('/dev/projects/site-1/report?month=2026-13', { token: dev.alice });
+  check('a bad report month is refused', r.status === 400, r.status);
+  r = await apiCall('/dev/projects/site-1/report?month=2026-10', { token: dev.owner });
+  check("users can't read someone else's report", r.status === 404, r.status);
+  r = await apiCall('/dev/projects/site-1/report?month=2026-09', { token: dev.alice });
+  check('a month with no checks reports no uptime', r.status === 200 && r.data.uptime === null, JSON.stringify(r.data).slice(0, 200));
+
+  r = await apiCall('/dev/github/rerun', { token: dev.alice, method: 'POST', body: { repo: 'alice/app', runId: 1 } });
+  check('re-running CI needs a GitHub connection', r.status === 409, r.status);
+  r = await apiCall('/dev/github/rerun', { method: 'POST', body: { repo: 'alice/app', runId: 1 } });
+  check('re-running CI needs sign-in', r.status === 401, r.status);
+  connect = await startConnect(dev.alice);
+  await finishConnect('app-alice', connect.state, connect.cookie);
+  for (const [label, body] of [['bad repo', { repo: '../../evil', runId: 1 }], ['bad run', { repo: 'alice/app', runId: -1 }]]) {
+    r = await apiCall('/dev/github/rerun', { token: dev.alice, method: 'POST', body });
+    check(`re-running with a ${label} refused`, r.status === 400, r.status);
+  }
+  r = await apiCall('/dev/github/rerun', { token: dev.alice, method: 'POST', body: { repo: 'alice/app', runId: 403 } });
+  check('a missing permission is explained', r.status === 403 && r.data.error.includes('read and write'), JSON.stringify(r.data));
+  const rerunsBefore = (await fakeGitHub('/__test/reruns')).reruns;
+  r = await apiCall('/dev/github/rerun', { token: dev.alice, method: 'POST', body: { repo: 'alice/app', runId: 1 } });
+  check('failed CI can be re-run', r.status === 200 && (await fakeGitHub('/__test/reruns')).reruns === rerunsBefore + 1, JSON.stringify(r.data));
+  await apiCall('/dev/github/connection', { token: dev.alice, method: 'DELETE' });
 
   let limited = false;
   for (let i = 0; i < 31; i += 1) {

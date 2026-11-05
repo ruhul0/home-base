@@ -70,6 +70,9 @@ func (a *App) runMonitorScheduler(ctx context.Context) {
 			if err := a.store.deleteOldMonitorChecks(ctx); err != nil {
 				log.Printf("removing old monitor checks failed: %v", err)
 			}
+			if err := a.store.deleteOldHistory(ctx); err != nil {
+				log.Printf("removing old monitor history failed: %v", err)
+			}
 		}
 	}
 }
@@ -91,6 +94,9 @@ func (a *App) checkAllMonitors(ctx context.Context) error {
 				if err := a.store.saveMonitorCheck(ctx, address, result); err != nil && ctx.Err() == nil {
 					log.Printf("saving a monitor check failed: %v", err)
 				}
+				if err := a.store.saveDailyRollup(ctx, address, result); err != nil && ctx.Err() == nil {
+					log.Printf("saving monitor history failed: %v", err)
+				}
 			}
 		}()
 	}
@@ -102,6 +108,7 @@ func (a *App) checkAllMonitors(ctx context.Context) error {
 	}
 	close(work)
 	group.Wait()
+	a.refreshExpiry(ctx, addresses)
 	return nil
 }
 
@@ -127,6 +134,13 @@ func (s *Store) allMonitorAddresses(ctx context.Context) ([]string, error) {
 			if !seen[monitor.URL] && len(addresses) < maxScheduledMonitors {
 				seen[monitor.URL] = true
 				addresses = append(addresses, monitor.URL)
+			}
+		}
+		// Every project's site is watched automatically, for its status, reports and expiry dates.
+		for _, project := range workspace.Projects {
+			if !seen[project.URL] && len(addresses) < maxScheduledMonitors {
+				seen[project.URL] = true
+				addresses = append(addresses, project.URL)
 			}
 		}
 	}

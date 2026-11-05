@@ -13,13 +13,14 @@ export default function PrivacyPage() {
         <li>Your GitHub user ID and username, which identify your account.</li>
         <li>The groups and sites you save, your design choices and any background or icon images you upload, so they appear on your devices.</li>
         <li>Your todos, scratchpad and the addresses you choose to monitor.</li>
-        <li>Up to 7 days of check results for the addresses you monitor.</li>
+        <li>Your projects, saved commands and tracked time. Projects can hold SSH commands and notes, and these aren&apos;t encrypted, so don&apos;t put passwords in them.</li>
+        <li>Up to 7 days of check results for the addresses you monitor, plus daily uptime totals and an outage log for up to 400 days.</li>
         <li>A protected record of each signed-in device, including its browser type, kept until you sign out or for 90 days after it was last used.</li>
       </ul>
 
       <h2>What our server requests for you</h2>
       <p>
-        To show the developer panels, our server requests your public profile, repositories, issues, pull requests and activity from GitHub, top stories from Hacker News, and any addresses you add as monitors. Those sites see the request as coming from our server, not from you. Your GitHub password is never involved, and private repositories are only read if you choose to connect them. Text in the dev toolbox stays in your browser and is never sent to our server.
+        To show the developer panels, our server requests your public profile, repositories, issues, pull requests and activity from GitHub, top stories from Hacker News, and any addresses you add as monitors or projects. For projects, it also reads each site&apos;s SSL certificate date and looks up its domain&apos;s expiry date through the public RDAP service at rdap.org, which sees the domain name. Those sites see the request as coming from our server, not from you. Your GitHub password is never involved, and private repositories are only read if you choose to connect them. Text in the dev toolbox stays in your browser and is never sent to our server.
       </p>
 
       <h2>What GitHub shares</h2>

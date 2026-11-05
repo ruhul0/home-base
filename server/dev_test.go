@@ -99,3 +99,63 @@ func TestCachedServesLastGoodValueAfterFailure(t *testing.T) {
 		t.Fatalf("after failure: %d, %v", value, err)
 	}
 }
+
+func TestParseRDAPExpiry(t *testing.T) {
+	date, ok := parseRDAPExpiry([]byte(`{"events":[{"eventAction":"registration","eventDate":"2020-01-01T00:00:00Z"},{"eventAction":"expiration","eventDate":"2027-03-04T05:06:07Z"}]}`))
+	if !ok || date.Format("2006-01-02") != "2027-03-04" {
+		t.Fatalf("got %v, %v", date, ok)
+	}
+	for _, body := range []string{`{}`, `not json`, `{"events":[{"eventAction":"expiration","eventDate":"soon"}]}`} {
+		if _, ok := parseRDAPExpiry([]byte(body)); ok {
+			t.Errorf("%q should have no date", body)
+		}
+	}
+}
+
+func TestCertificateExpiryReadsTheServersCertificate(t *testing.T) {
+	t.Setenv("MONITOR_ALLOW_PRIVATE", "true")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	host, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := newDevServices().certificateExpiry(context.Background(), host, port)
+	if !expiry.Valid || !expiry.Time.Equal(server.Certificate().NotAfter) {
+		t.Fatalf("got %v, want %v", expiry, server.Certificate().NotAfter)
+	}
+}
+
+func TestCertificateCheckRefusesPrivateAddresses(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	host, port, _ := net.SplitHostPort(server.Listener.Addr().String())
+	if expiry := newDevServices().certificateExpiry(context.Background(), host, port); expiry.Valid {
+		t.Fatal("a certificate check reached a private address")
+	}
+}
+
+func TestCleanProjectsAndCommands(t *testing.T) {
+	good := Project{ID: "a-1", Name: "Site", URL: "https://example.com/", Repo: "owner/repo"}
+	if _, ok := cleanProjects([]Project{good}); !ok {
+		t.Error("a valid project should pass")
+	}
+	for _, bad := range []Project{
+		{ID: "<x>", Name: "Site", URL: "https://example.com/"},
+		{ID: "a", Name: "", URL: "https://example.com/"},
+		{ID: "a", Name: "Site", URL: "javascript:alert(1)"},
+		{ID: "a", Name: "Site", URL: "https://example.com/", Staging: "file:///etc/passwd"},
+		{ID: "a", Name: "Site", URL: "https://example.com/", Repo: "not a repo"},
+		{ID: "a", Name: "Site", URL: "https://example.com/", Repo: "../../etc/passwd"},
+	} {
+		if _, ok := cleanProjects([]Project{bad}); ok {
+			t.Errorf("%+v should be refused", bad)
+		}
+	}
+	if _, ok := cleanCommands([]SavedCommand{{ID: "a", Name: "Logs", Command: "docker logs"}}); !ok {
+		t.Error("a valid command should pass")
+	}
+	if _, ok := cleanCommands([]SavedCommand{{ID: "a", Name: "Logs", Command: "  "}}); ok {
+		t.Error("an empty command should be refused")
+	}
+}

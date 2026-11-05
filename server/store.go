@@ -79,6 +79,38 @@ var schema = []string{
 	   last_error VARCHAR(200) NOT NULL DEFAULT '',
 	   last_bytes BIGINT NOT NULL DEFAULT 0
 	 )`,
+	`CREATE TABLE IF NOT EXISTS monitor_daily (
+	   url_hash CHAR(64) NOT NULL,
+	   day DATE NOT NULL,
+	   checks INT NOT NULL,
+	   up_checks INT NOT NULL,
+	   total_ms BIGINT NOT NULL,
+	   PRIMARY KEY (url_hash, day)
+	 )`,
+	`CREATE TABLE IF NOT EXISTS monitor_incidents (
+	   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+	   url_hash CHAR(64) NOT NULL,
+	   started_at DATETIME NOT NULL,
+	   ended_at DATETIME NULL,
+	   problem VARCHAR(200) NOT NULL DEFAULT '',
+	   INDEX monitor_incidents_lookup (url_hash, started_at)
+	 ) CHARACTER SET utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS site_expiry (
+	   host VARCHAR(255) PRIMARY KEY,
+	   certificate_expires DATETIME NULL,
+	   domain_expires DATETIME NULL,
+	   checked_at DATETIME NOT NULL
+	 )`,
+	`CREATE TABLE IF NOT EXISTS time_entries (
+	   id BIGINT AUTO_INCREMENT PRIMARY KEY,
+	   user_id INT NOT NULL,
+	   project_id VARCHAR(40) NOT NULL,
+	   note VARCHAR(200) NOT NULL DEFAULT '',
+	   started_at DATETIME NOT NULL,
+	   ended_at DATETIME NULL,
+	   INDEX time_entries_lookup (user_id, started_at),
+	   CONSTRAINT time_entries_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+	 ) CHARACTER SET utf8mb4`,
 	`CREATE TABLE IF NOT EXISTS sessions (
 	   token_hash CHAR(64) PRIMARY KEY,
 	   user_id INT NOT NULL,
