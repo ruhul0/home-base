@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -32,7 +34,10 @@ const (
 	maxBackgroundLen = 480 * 1024
 	stateCookie      = "oauth_state"
 	stateCookiePath  = "/auth/github"
-	contentSecurity  = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+	immutablePrefix  = "/_next/static/"
+	// Scripts stay limited to this site's own files. Inline styles are allowed because the
+	// interface libraries add them at runtime, and they can't run code.
+	contentSecurity = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 )
 
 var (
@@ -188,15 +193,39 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// staticFiles serves the website's files, without listing the contents of folders.
+func (a *App) isFile(requestPath string) bool {
+	info, err := os.Stat(filepath.Join(a.publicDir, filepath.FromSlash(path.Clean(requestPath))))
+	return err == nil && !info.IsDir()
+}
+
+// staticFiles serves the exported Next.js site. Clean addresses like /newtab map to newtab.html,
+// folders are never listed, and anything else gets the site's 404 page.
 func (a *App) staticFiles() http.Handler {
 	files := http.FileServer(http.Dir(a.publicDir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && strings.HasSuffix(r.URL.Path, "/") {
-			http.NotFound(w, r)
+		requestPath := r.URL.Path
+		switch {
+		case requestPath == "/" || a.isFile(requestPath):
+		case a.isFile(requestPath + ".html"):
+			r.URL.Path = requestPath + ".html"
+		default:
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			if page, err := os.ReadFile(filepath.Join(a.publicDir, "404.html")); err == nil {
+				if _, err := w.Write(page); err != nil {
+					log.Printf("write 404 page: %v", err)
+				}
+			}
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
+
+		// Files under this folder have their contents in their names, so they can be kept forever.
+		if strings.HasPrefix(requestPath, immutablePrefix) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		files.ServeHTTP(w, r)
 	})
 }

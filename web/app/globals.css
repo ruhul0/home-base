@@ -1,0 +1,261 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@plugin "daisyui" {
+  themes: all;
+}
+
+/* DaisyUI owns the colours through its themes. Its primary, secondary, accent and base colours are
+   used directly, and the names shadcn/ui expects are mapped onto them, so both libraries follow the
+   selected theme together. */
+@custom-variant dark (&:where([data-color-scheme="dark"], [data-color-scheme="dark"] *));
+
+@theme inline {
+  --font-sans: var(--home-font);
+  --color-background: var(--color-base-100);
+  --color-foreground: var(--color-base-content);
+  --color-primary-foreground: var(--color-primary-content);
+  --color-secondary-foreground: var(--color-secondary-content);
+  --color-accent-foreground: var(--color-accent-content);
+  --color-muted: var(--color-base-200);
+  --color-muted-foreground: color-mix(in oklab, var(--color-base-content) 65%, transparent);
+  --color-popover: var(--color-base-100);
+  --color-popover-foreground: var(--color-base-content);
+  --color-card: var(--color-base-100);
+  --color-card-foreground: var(--color-base-content);
+  --color-destructive: var(--color-error);
+  --color-border: color-mix(in oklab, var(--color-base-content) 15%, transparent);
+  --color-input: color-mix(in oklab, var(--color-base-content) 20%, transparent);
+  --color-ring: var(--color-primary);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --radius: 0.625rem;
+  --home-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --icon-size: 2.75rem;
+  --tile-min: 5.25rem;
+  --group-radius: 1.4rem;
+  --icon-radius: 0.875rem;
+  --page-width: 70rem;
+  --clock-size: clamp(3.25rem, 8vw, 5.25rem);
+  --hero-text: var(--color-base-content);
+  --hero-muted: color-mix(in oklab, var(--color-base-content) 68%, transparent);
+  --hero-shadow: none;
+  --group-text: var(--color-base-content);
+}
+
+:root[data-font="serif"] { --home-font: Georgia, "Iowan Old Style", "Times New Roman", serif; }
+:root[data-font="mono"] { --home-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+:root[data-font="rounded"] { --home-font: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif; }
+:root[data-tile-size="small"] { --icon-size: 2.125rem; --tile-min: 4.25rem; }
+:root[data-tile-size="large"] { --icon-size: 3.625rem; --tile-min: 6.75rem; }
+:root[data-icon-shape="circle"] { --icon-radius: 50%; }
+:root[data-icon-shape="square"] { --icon-radius: 0.3rem; }
+:root[data-page-width="narrow"] { --page-width: 51rem; }
+:root[data-page-width="wide"] { --page-width: 92rem; }
+:root[data-corners="sharp"] { --group-radius: 0.375rem; }
+:root[data-corners="soft"] { --group-radius: 0.875rem; }
+:root[data-clock-size="small"] { --clock-size: clamp(2.125rem, 5vw, 3.125rem); }
+:root[data-clock-size="large"] { --clock-size: clamp(4.5rem, 12vw, 8.25rem); }
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100vh;
+  }
+}
+
+/* Background. Theme colours draw soft glows from whichever DaisyUI theme is active. */
+.home-background {
+  background-color: var(--color-base-100);
+  background-image:
+    radial-gradient(60vw 50vh at 12% 0%, color-mix(in oklab, var(--color-primary) 24%, transparent), transparent 70%),
+    radial-gradient(55vw 50vh at 90% 8%, color-mix(in oklab, var(--color-secondary) 20%, transparent), transparent 70%),
+    radial-gradient(70vw 50vh at 50% 100%, color-mix(in oklab, var(--color-accent) 16%, transparent), transparent 70%);
+  background-attachment: fixed;
+}
+:root[data-background-type="solid"] .home-background {
+  background-image: none;
+  background-color: var(--custom-background);
+}
+:root[data-background-type="image"] .home-background {
+  background-color: #14151f;
+  background-image:
+    linear-gradient(rgb(0 0 0 / var(--background-dim, 0)), rgb(0 0 0 / var(--background-dim, 0))),
+    var(--background-image, none);
+  background-size: cover;
+  background-position: center;
+}
+:root[data-background-type="image"] {
+  --hero-text: #ffffff;
+  --hero-muted: rgb(255 255 255 / 0.86);
+  --hero-shadow: 0 1px 12px rgb(0 0 0 / 0.55);
+}
+.home-pattern {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+}
+:root[data-pattern="dots"] .home-pattern {
+  background-image: radial-gradient(rgb(128 128 128 / 0.32) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+}
+:root[data-pattern="grid"] .home-pattern {
+  background-image:
+    linear-gradient(rgb(128 128 128 / 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(128 128 128 / 0.14) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+:root[data-pattern="lines"] .home-pattern {
+  background-image: repeating-linear-gradient(135deg, rgb(128 128 128 / 0.12) 0 1px, transparent 1px 16px);
+}
+
+/* Page layout */
+.home-page {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: var(--page-width);
+  margin-inline: auto;
+}
+.home-hero { color: var(--hero-text); text-shadow: var(--hero-shadow); text-align: center; }
+.home-hero-muted { color: var(--hero-muted); }
+.home-clock {
+  font-size: var(--clock-size);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.home-toolbar { color: var(--hero-muted); text-shadow: var(--hero-shadow); }
+:root[data-hero-align="left"] .home-hero { text-align: left; }
+:root[data-hero-align="left"] .home-search { margin-left: 0; }
+@media (min-width: 900px) {
+  :root.customize-open .home-shell { padding-right: 23rem; }
+}
+
+/* Groups */
+.home-groups {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+}
+@media (min-width: 720px) {
+  :root[data-columns="1"] .home-groups { grid-template-columns: minmax(0, 1fr); }
+  :root[data-columns="2"] .home-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :root[data-columns="3"] .home-groups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  :root[data-columns="4"] .home-groups { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.home-group {
+  padding: 1.125rem;
+  color: var(--group-text);
+  background: color-mix(in oklab, var(--color-base-100) 72%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: var(--group-radius);
+  box-shadow: 0 10px 30px rgb(20 20 50 / 0.1);
+  backdrop-filter: blur(16px);
+}
+:root[data-card-style="solid"] .home-group { background: var(--color-base-100); backdrop-filter: none; }
+:root[data-card-style="outline"] .home-group { background: transparent; box-shadow: none; backdrop-filter: none; }
+:root[data-card-style="none"] { --group-text: var(--hero-text); }
+:root[data-card-style="none"] .home-group {
+  padding: 0.375rem;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  text-shadow: var(--hero-shadow);
+}
+.home-drop-target { outline: 2px dashed var(--color-primary); outline-offset: 2px; }
+
+.home-links {
+  display: grid;
+  gap: 0.375rem;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-min), 1fr));
+}
+.home-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  height: 100%;
+  min-width: 0;
+  padding: 0.6875rem 0.3125rem 0.5625rem;
+  color: inherit;
+  text-align: center;
+  text-decoration: none;
+  border-radius: 0.9375rem;
+  transition: background 120ms ease, transform 120ms ease;
+}
+.home-link:hover { background: color-mix(in oklab, currentColor 9%, transparent); transform: translateY(-2px); }
+.home-link-name {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.home-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  overflow: hidden;
+  font-size: calc(var(--icon-size) * 0.43);
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--tile, var(--color-primary));
+  border-radius: var(--icon-radius);
+  box-shadow: 0 2px 8px rgb(20 20 50 / 0.16);
+}
+.home-icon-image { padding: 18%; background: #ffffff; }
+.home-icon-image img { width: 100%; height: 100%; }
+
+:root[data-layout="list"] .home-links { grid-template-columns: minmax(0, 1fr); gap: 0.125rem; }
+:root[data-layout="list"] .home-link { flex-direction: row; gap: 0.75rem; padding: 0.4375rem 0.5rem; text-align: left; }
+:root[data-layout="list"] .home-link:hover { transform: none; }
+:root[data-layout="list"] .home-link-name { font-size: 0.875rem; }
+:root[data-layout="list"] .home-icon { width: 2rem; height: 2rem; font-size: 0.875rem; }
+:root[data-layout="compact"] .home-links { grid-template-columns: repeat(auto-fill, minmax(calc(var(--icon-size) + 0.875rem), 1fr)); }
+:root[data-layout="compact"] .home-link { padding: 0.4375rem 0.25rem; }
+:root[data-layout="compact"] .home-link-name { display: none; }
+:root[data-show-labels="false"] .home-link-name { display: none; }
+:root[data-show-group-titles="false"] .home-group-title { display: none; }
+:root[data-editing="true"] .home-link { pointer-events: none; }
+:root[data-editing="true"] [data-draggable="true"] { cursor: grab; }
+
+@media (prefers-reduced-motion: reduce) {
+  .home-link { transition: none; }
+  .home-link:hover { transform: none; }
+}
+
+/* shadcn highlights menu items with "accent", which is a bright brand colour in DaisyUI themes. */
+[data-slot="select-item"][data-highlighted],
+[data-slot="dropdown-menu-item"][data-highlighted] {
+  color: var(--color-base-content);
+  background: var(--color-base-200);
+}
+
+/* Long legal text */
+.home-policy h2 { margin: 1.75rem 0 0.375rem; font-size: 1rem; font-weight: 650; }
+.home-policy p, .home-policy li { line-height: 1.6; }
+.home-policy ul { padding-left: 1.25rem; list-style: disc; }
+.home-policy a { color: var(--color-primary); text-decoration: underline; }

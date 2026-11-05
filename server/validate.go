@@ -20,7 +20,14 @@ const (
 var hexColour = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 var preferenceChoices = map[string][]string{
-	"theme":          {"aurora", "ocean", "sunset", "forest", "rose", "violet", "amber", "midnight", "mono"},
+	// "auto" and the DaisyUI themes, followed by older theme names that saved designs may still use.
+	"theme": {
+		"auto", "light", "dark", "cupcake", "bumblebee", "emerald", "corporate", "synthwave", "retro", "cyberpunk",
+		"valentine", "halloween", "garden", "forest", "aqua", "lofi", "pastel", "fantasy", "wireframe", "black",
+		"luxury", "dracula", "cmyk", "autumn", "business", "acid", "lemonade", "night", "coffee", "winter",
+		"dim", "nord", "sunset", "caramellatte", "abyss", "silk",
+		"aurora", "ocean", "rose", "violet", "amber", "midnight", "mono",
+	},
 	"mode":           {"auto", "light", "dark"},
 	"backgroundType": {"theme", "solid", "image"},
 	"pattern":        {"none", "dots", "grid", "lines"},

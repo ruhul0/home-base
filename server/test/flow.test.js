@@ -382,10 +382,27 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
 
   r = await fetch(`${base}/`);
   const page = await r.text();
-  check('landing page served at the root', page.includes('Start every day from your own page') && page.includes('newtab.html?signin=1'));
+  check('landing page served at the root', page.includes('Start every day from your own page') && page.includes('/newtab?signin=1'));
+  check('security policy keeps scripts to site files', !/script-src[^;]*unsafe/.test(r.headers.get('content-security-policy')) && r.headers.get('content-security-policy').includes("script-src 'self'"), r.headers.get('content-security-policy'));
+  const inlineScripts = (page.match(/<script[^>]*>/g) || []).filter((tag) => !tag.includes('src='));
+  check('no inline scripts for the security policy to block', inlineScripts.length === 0, inlineScripts.join(' '));
+  for (const address of ['/newtab', '/newtab.html', '/admin', '/admin.html', '/privacy', '/privacy.html']) {
+    r = await fetch(`${base}${address}`, { redirect: 'manual' });
+    check(`${address} serves a page`, r.status === 200 && r.headers.get('content-type').startsWith('text/html'), r.status);
+  }
+  r = await fetch(`${base}/this-does-not-exist`);
+  check('unknown pages get a 404', r.status === 404, r.status);
+  r = await fetch(`${base}/icons/`);
+  check('folders are not listed', r.status === 404, r.status);
+  r = await fetch(`${base}/../../etc/passwd`);
+  check('files outside the site are not served', r.status === 404, r.status);
+  const scriptPath = /src="(\/_next\/static\/[^"]+\.js)"/.exec(page);
+  r = await fetch(`${base}${scriptPath[1]}`);
+  check('built scripts are served and cached', r.status === 200 && r.headers.get('cache-control').includes('immutable'), r.headers.get('cache-control'));
   check('public page has no private sites', !page.includes('UCC'));
-  r = await fetch(`${base}/newtab.html`);
-  check('start page offers GitHub sign-in', (await r.text()).includes('Continue with GitHub'));
+  check('landing page offers GitHub sign-in', page.includes('Continue with GitHub'));
+  r = await apiCall('/preferences', { token: fresh.owner, method: 'PUT', body: { preferences: { theme: 'dracula' } } });
+  check('DaisyUI themes can be saved', r.status === 200, r.status);
   r = await fetch(`${base}/admin.html`);
   const adminPage = await r.text();
   check('admin page has no data before sign-in', r.status === 200 && !adminPage.includes('@owner') && !adminPage.includes('alice'));

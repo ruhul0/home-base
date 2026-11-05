@@ -1,6 +1,6 @@
 # Chrome Web Store listing
 
-Upload `dist/home-base-extension.zip`, then use the text below.
+Build with `npm run build && npm run build:extension` in `web/`, upload `dist/home-base-extension.zip`, then use the text below.
 
 **Name:** Home Base
 
@@ -50,7 +50,7 @@ Open a new tab, click Continue with GitHub and sign in with any GitHub account. 
 
 ## Images
 
-- Store icon: `icons/icon128.png`
+- Store icon: `assets/store/store-icon-128x128.png`
 - Screenshots: `assets/store/screenshot-*-1280x800.png`
 - Small promo tile: `assets/store/small-promo-440x280.png`
 

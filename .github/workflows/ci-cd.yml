@@ -25,13 +25,29 @@ jobs:
           test -z "$(gofmt -l .)"
           go vet ./...
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Check the frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run typecheck
+          npm run lint
+
       - name: Check script syntax
         run: |
-          for file in *.js server/test/*.js; do node --check "$file"; done
+          for file in server/test/*.js; do node --check "$file"; done
           for file in deploy/*.sh; do bash -n "$file"; done
 
       - name: Build the extension package
-        run: bash deploy/package-extension.sh
+        working-directory: web
+        run: |
+          npm run build
+          npm run build:extension
 
       - name: Build the app image
         run: docker build -t chrome-home-app -f server/Dockerfile .
