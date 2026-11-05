@@ -114,7 +114,7 @@ export function TimeCard({ projects, timer }: { projects: Project[]; timer: Time
               </Button>
             </div>
             <p className="text-xs opacity-70">
-              Or press <kbd className="kbd kbd-xs text-base-content">s</kbd> anywhere to start or stop.
+              Or press <kbd className="kbd kbd-xs text-base-content">⌥S</kbd> anywhere to start or stop.
             </p>
           </form>
         )}

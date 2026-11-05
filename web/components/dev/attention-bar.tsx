@@ -74,7 +74,8 @@ export function AttentionBar({
   const items = useMemo(() => buildAttention(projects ?? [], github, servers, serverTime), [github, projects, serverTime, servers]);
 
   // "All clear" is only said once everything has been checked, never while something is unknown.
-  const unknown = [projectsFailed && "your projects", githubFailed && "GitHub"].filter(Boolean).join(" and ");
+  const unreadCI = (projects ?? []).filter((project) => project.repo && !project.ci).length;
+  const unknown = [projectsFailed && "your projects", githubFailed && "GitHub", unreadCI > 0 && `CI on ${unreadCI} ${unreadCI === 1 ? "project" : "projects"}`].filter(Boolean).join(" and ");
   const loaded = projects !== null || projectsFailed;
   if (!loaded) return null;
 

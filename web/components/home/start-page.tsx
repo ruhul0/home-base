@@ -270,6 +270,12 @@ export function StartPage() {
         setPaletteOpen((open) => !open);
         return;
       }
+      // The search box usually has focus, so the timer also has a shortcut that works while typing.
+      if (event.altKey && !event.metaKey && !event.ctrlKey && event.code === "KeyS") {
+        event.preventDefault();
+        toggleTimer.current();
+        return;
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       // Single letters only act as shortcuts when nothing is being typed and no dialog is open.
