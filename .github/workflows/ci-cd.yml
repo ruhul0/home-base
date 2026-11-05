@@ -15,9 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+
+      - name: Check Go code
+        working-directory: server
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+
       - name: Check script syntax
         run: |
-          for file in *.js server/*.js server/test/*.js; do node --check "$file"; done
+          for file in *.js server/test/*.js; do node --check "$file"; done
           for file in deploy/*.sh; do bash -n "$file"; done
 
       - name: Build the extension package
@@ -27,7 +37,7 @@ jobs:
         run: docker build -t chrome-home-app -f server/Dockerfile .
 
       - name: Run the tests against a temporary database
-        run: docker compose -f server/test/stack.yml run --rm -T runner node - < server/test/flow.test.js
+        run: docker compose -f server/test/stack.yml run --rm --build -T runner
 
       - name: Remove the temporary database
         if: always()

@@ -1,4 +1,38 @@
+# A throwaway copy of the app for end-to-end tests. Build the app image first:
+#   docker build -t chrome-home-app -f server/Dockerfile .
+#   docker compose -f server/test/stack.yml run --rm --build runner
 name: chrome-home-test
+
+x-app: &app
+  image: chrome-home-app
+  depends_on:
+    seed:
+      condition: service_completed_successfully
+    fake-github:
+      condition: service_started
+
+x-app-environment: &app-environment
+  DB_HOST: db
+  DB_NAME: test
+  DB_USER: test
+  DB_PASSWORD: throwaway
+  PUBLIC_URL: http://app:3000
+  OWNER_GITHUB_LOGIN: Owner-User
+  GITHUB_CLIENT_ID: test-client
+  GITHUB_CLIENT_SECRET: test-secret
+  GITHUB_WEB_URL: http://fake-github:4000
+  GITHUB_API_URL: http://fake-github:4000
+  MAX_USERS: "5"
+  EXTENSION_IDS: ckmmmpglhbeeeppgclggngmgdjogmlmh
+  ADMIN_GITHUB_ID: "1001"
+
+x-tests: &tests
+  build: .
+  environment:
+    DB_HOST: db
+    DB_NAME: test
+    DB_USER: test
+    DB_PASSWORD: throwaway
 
 services:
   db:
@@ -19,24 +53,48 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
-    mem_limit: 512m
 
-  runner:
-    image: chrome-home-app
+  # Creates a database in the oldest format, so the tests also cover upgrading real data.
+  seed:
+    <<: *tests
+    command: ["node", "seed.js"]
     depends_on:
       db:
         condition: service_healthy
+
+  fake-github:
+    <<: *tests
+    command: ["node", "fake-github.js"]
+
+  app:
+    <<: *app
     environment:
-      DB_HOST: db
-      DB_NAME: test
-      DB_USER: test
-      DB_PASSWORD: throwaway
-      PUBLIC_URL: http://localhost:3000
-      OWNER_GITHUB_LOGIN: Owner-User
-      GITHUB_CLIENT_ID: test-client
-      GITHUB_CLIENT_SECRET: test-secret
-      GITHUB_WEB_URL: http://localhost:4000
-      GITHUB_API_URL: http://localhost:4000
-      MAX_USERS: "5"
-      EXTENSION_IDS: ckmmmpglhbeeeppgclggngmgdjogmlmh
-      ADMIN_GITHUB_ID: "1001"
+      <<: *app-environment
+
+  # These share the database, and differ only in the settings being tested.
+  app-allowlist:
+    <<: *app
+    environment:
+      <<: *app-environment
+      ALLOWED_GITHUB_LOGINS: "alice, Owner-Renamed"
+
+  app-admin-email:
+    <<: *app
+    environment:
+      <<: *app-environment
+      ADMIN_EMAIL: alice@example.COM
+
+  app-store-link:
+    <<: *app
+    environment:
+      <<: *app-environment
+      EXTENSION_URL: https://chromewebstore.google.com/detail/test
+
+  runner:
+    <<: *tests
+    command: ["node", "flow.test.js"]
+    depends_on:
+      - app
+      - app-allowlist
+      - app-admin-email
+      - app-store-link

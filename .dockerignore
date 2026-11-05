@@ -12,6 +12,6 @@
 !privacy.css
 !icons/*.png
 !assets/store/screenshot-*.png
-!server/*.js
-!server/package.json
-!server/package-lock.json
+!server/*.go
+!server/go.mod
+!server/go.sum

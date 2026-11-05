@@ -1,17 +1,14 @@
+'use strict';
+
+// End-to-end tests of the running server. See stack.yml for how the services fit together.
 const crypto = require('node:crypto');
-const http = require('node:http');
 const mysql = require('mysql2/promise');
 
-const base = 'http://localhost:3000';
-const profiles = {
-  'code-owner': { id: 1001, login: 'owner-user' },
-  'code-owner-renamed': { id: 1001, login: 'owner-renamed' },
-  'code-alice': { id: 2002, login: 'alice', email: 'Alice@Example.com' },
-  'code-bob': { id: 3003, login: 'bob' },
-  'code-u4': { id: 4004, login: 'user4' },
-  'code-u5': { id: 5005, login: 'user5' },
-  'code-u6': { id: 6006, login: 'user6' },
-};
+const MAIN = 'http://app:3000';
+const ALLOWLIST = 'http://app-allowlist:3000';
+const ADMIN_EMAIL = 'http://app-admin-email:3000';
+const STORE_LINK = 'http://app-store-link:3000';
+let base = MAIN;
 
 let failed = 0;
 const check = (label, ok, extra = '') => {
@@ -19,51 +16,16 @@ const check = (label, ok, extra = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${ok ? '' : ` :: ${extra}`}`);
 };
 
-function startFakeGithub() {
-  return new Promise((resolve) => {
-    const server = http.createServer((req, res) => {
-      res.setHeader('Content-Type', 'application/json');
-      if (req.url === '/login/oauth/access_token') {
-        let body = '';
-        req.on('data', (chunk) => { body += chunk; });
-        req.on('end', () => {
-          const { code, client_secret: secret } = JSON.parse(body);
-          if (secret !== 'test-secret' || !profiles[code]) return res.end(JSON.stringify({ error: 'bad_verification_code' }));
-          res.end(JSON.stringify({ access_token: code }));
-        });
-        return;
-      }
-      if (req.url === '/user') {
-        const profile = profiles[(req.headers.authorization || '').replace('Bearer ', '')];
-        res.statusCode = profile ? 200 : 401;
-        return res.end(JSON.stringify(profile || {}));
-      }
-      res.statusCode = 404;
-      res.end('{}');
-    });
-    server.listen(4000, resolve);
-  });
-}
-
-async function createLegacyDatabase() {
-  let connection;
-  for (let attempt = 0; attempt < 30 && !connection; attempt += 1) {
+async function waitForServer(address) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
-      connection = await mysql.createConnection({ host: 'db', user: 'test', password: 'throwaway', database: 'test' });
+      if ((await fetch(`${address}/api/health`)).ok) return;
     } catch {
-      await new Promise((r) => setTimeout(r, 1000));
+      // The server is still starting.
     }
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  await connection.query('CREATE TABLE users (id INT AUTO_INCREMENT PRIMARY KEY, github_id BIGINT NOT NULL UNIQUE, login VARCHAR(100) NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)');
-  await connection.query('CREATE TABLE settings (name VARCHAR(64) PRIMARY KEY, value TEXT NOT NULL)');
-  await connection.query("INSERT INTO settings VALUES ('seeded', '1')");
-  await connection.query('CREATE TABLE sessions (token_hash CHAR(64) PRIMARY KEY, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at DATETIME NOT NULL, INDEX sessions_expires_at (expires_at))');
-  await connection.query(`INSERT INTO sessions (token_hash, expires_at) VALUES ('${'a'.repeat(64)}', NOW() + INTERVAL 1 DAY)`);
-  await connection.query('CREATE TABLE link_groups (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL, position INT NOT NULL)');
-  await connection.query('CREATE TABLE links (id INT AUTO_INCREMENT PRIMARY KEY, group_id INT NOT NULL, name VARCHAR(100) NOT NULL, url VARCHAR(2048) NOT NULL, position INT NOT NULL, CONSTRAINT links_group FOREIGN KEY (group_id) REFERENCES link_groups (id) ON DELETE CASCADE)');
-  await connection.query("INSERT INTO link_groups (id, name, position) VALUES (1, 'Business', 0)");
-  await connection.query("INSERT INTO links (group_id, name, url, position) VALUES (1, 'UCC Webmail', 'https://mail.ucc.com.bd/', 0)");
-  return connection;
+  throw new Error(`${address} never became healthy.`);
 }
 
 const makeProof = () => {
@@ -115,13 +77,13 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
 };
 
 (async () => {
-  const connection = await createLegacyDatabase();
-  await startFakeGithub();
-  require('./index');
-  for (let i = 0; i < 40; i += 1) {
-    try { if ((await fetch(`${base}/api/health`)).ok) break; } catch {}
-    await new Promise((r) => setTimeout(r, 250));
-  }
+  for (const address of [MAIN, ALLOWLIST, ADMIN_EMAIL, STORE_LINK]) await waitForServer(address);
+  const connection = await mysql.createConnection({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+  });
 
   const extensionId = 'ckmmmpglhbeeeppgclggngmgdjogmlmh';
   const extensionTarget = `https://${extensionId}.chromiumapp.org/`;
@@ -135,7 +97,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
 
   const proof = makeProof();
   const started = await startLogin(proof.challenge);
-  check('start redirects to GitHub', started.location.href.startsWith('http://localhost:4000/login/oauth/authorize'), started.location.href);
+  check('start redirects to GitHub', started.location.href.startsWith('http://fake-github:4000/login/oauth/authorize'), started.location.href);
   check('no extra GitHub permissions requested', !started.location.searchParams.has('scope'));
   check('state cookie is HttpOnly, Secure, Lax', /HttpOnly/i.test(started.res.headers.get('set-cookie')) && /Secure/i.test(started.res.headers.get('set-cookie')) && /SameSite=Lax/i.test(started.res.headers.get('set-cookie')));
 
@@ -221,7 +183,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall('/preferences', { token: aliceToken, method: 'PUT', body: { preferences: aliceDesign } });
   check('alice saves her design', r.status === 200, r.status);
   r = await apiCall('/groups', { token: aliceToken });
-  check('alice reads her design back', JSON.stringify(r.data.preferences) === JSON.stringify(aliceDesign), JSON.stringify(r.data.preferences));
+  check('alice reads her design back', Object.entries(aliceDesign).every(([key, value]) => r.data.preferences[key] === value), JSON.stringify(r.data.preferences));
   r = await apiCall('/groups', { token: owner.token });
   check("alice's design doesn't affect owner", JSON.stringify(r.data.preferences) === '{}', JSON.stringify(r.data.preferences));
   r = await apiCall('/preferences', { token: aliceToken, method: 'PUT', body: { preferences: { theme: 'x;background:url(evil)' } } });
@@ -233,6 +195,63 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   check('unknown design fields dropped', r.data.preferences.css === undefined && r.data.preferences.theme === 'ocean', JSON.stringify(r.data.preferences));
   r = await apiCall('/preferences', { method: 'PUT', body: { preferences: { theme: 'ocean' } } });
   check('design save needs sign-in', r.status === 401, r.status);
+
+  const fullDesign = { theme: 'rose', accentColor: '#ff0088', backgroundType: 'solid', backgroundColor: '#112233', backgroundDim: 40, pattern: 'dots', font: 'serif', layout: 'compact', tileSize: 'large', iconShape: 'circle', columns: '4', pageWidth: 'wide', cardStyle: 'outline', corners: 'sharp', heroAlign: 'left', clockFormat: '24', clockSize: 'large', greetingText: 'Assalamu alaikum <b>', searchEngine: 'duckduckgo', showSeconds: true, showDate: false, showSearch: false, showLabels: false, showGroupTitles: false };
+  r = await apiCall('/preferences', { token: aliceToken, method: 'PUT', body: { preferences: fullDesign } });
+  check('full design saves', r.status === 200, JSON.stringify(r.data));
+  r = await apiCall('/groups', { token: aliceToken });
+  check('full design persists in MySQL', Object.entries(fullDesign).every(([key, value]) => r.data.preferences[key] === value), JSON.stringify(r.data.preferences));
+  r = await apiCall('/preferences', { token: aliceToken, method: 'PUT', body: { preferences: { theme: 'ocean' } } });
+  r = await apiCall('/groups', { token: aliceToken });
+  check('saving one setting keeps the others', r.data.preferences.theme === 'ocean' && r.data.preferences.font === 'serif' && r.data.preferences.tileSize === 'large', JSON.stringify(r.data.preferences));
+  const aliceRelogin = await signIn('code-alice');
+  r = await apiCall('/groups', { token: aliceRelogin.token });
+  check('design survives signing in again', r.data.preferences.font === 'serif', JSON.stringify(r.data.preferences));
+  for (const [label, bad] of [
+    ['colour with code', { accentColor: 'red;background:url(x)' }],
+    ['background colour with code', { backgroundColor: 'url(javascript:alert(1))' }],
+    ['empty background colour', { backgroundColor: '' }],
+    ['too long greeting', { greetingText: 'x'.repeat(61) }],
+    ['non-text greeting', { greetingText: { a: 1 } }],
+    ['made-up dim', { backgroundDim: 7 }],
+    ['made-up engine', { searchEngine: 'https://evil.example/?q=' }],
+  ]) {
+    r = await apiCall('/preferences', { token: aliceToken, method: 'PUT', body: { preferences: bad } });
+    check(`${label} refused`, r.status === 400, r.status);
+  }
+
+  const uploadImage = async (authToken, body, contentType = 'image/jpeg') => {
+    const res = await fetch(`${base}/api/background`, { method: 'PUT', headers: { ...(authToken ? { authorization: `Bearer ${authToken}` } : {}), 'content-type': contentType }, body });
+    return { status: res.status, data: await res.json().catch(() => null) };
+  };
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), crypto.randomBytes(2000)]);
+  r = await uploadImage(null, jpeg);
+  check('image upload needs sign-in', r.status === 401, r.status);
+  r = await uploadImage(aliceToken, jpeg);
+  check('JPEG upload accepted', r.status === 200 && /^\d+$/.test(r.data.version), JSON.stringify(r.data));
+  const uploadedVersion = r.data.version;
+  r = await uploadImage(aliceToken, Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>'), 'image/svg+xml');
+  check('SVG refused', r.status === 400, r.status);
+  r = await uploadImage(aliceToken, Buffer.from('<html><script>alert(1)</script></html>'), 'image/jpeg');
+  check('fake image refused', r.status === 400, r.status);
+  r = await uploadImage(aliceToken, Buffer.concat([jpeg, Buffer.alloc(490 * 1024)]));
+  check('oversized image refused', r.status === 413, r.status);
+  r = await apiCall('/groups', { token: aliceToken });
+  check('image version reaches the page', r.data.backgroundVersion === uploadedVersion, r.data.backgroundVersion);
+  let res = await fetch(`${base}/api/background`, { headers: { authorization: `Bearer ${aliceToken}` } });
+  const downloaded = Buffer.from(await res.arrayBuffer());
+  check('image downloads unchanged as JPEG', res.status === 200 && res.headers.get('content-type').startsWith('image/jpeg') && downloaded.equals(jpeg), res.status);
+  check('image stays out of caches', res.headers.get('cache-control') === 'no-store', res.headers.get('cache-control'));
+  res = await fetch(`${base}/api/background`);
+  check('image needs sign-in to view', res.status === 401, res.status);
+  res = await fetch(`${base}/api/background`, { headers: { authorization: `Bearer ${owner.token}` } });
+  check("other users can't get alice's image", res.status === 404, res.status);
+  r = await apiCall('/groups', { token: owner.token });
+  check("alice's image doesn't affect owner", r.data.backgroundVersion === null, r.data.backgroundVersion);
+  r = await apiCall('/background', { token: aliceToken, method: 'DELETE' });
+  res = await fetch(`${base}/api/background`, { headers: { authorization: `Bearer ${aliceToken}` } });
+  check('image can be removed', r.status === 200 && res.status === 404, res.status);
+  await uploadImage(aliceToken, jpeg);
 
   r = await extensionStart(makeProof().challenge, 'aaaabbbbccccddddeeeeffffgggghhhh');
   check('unapproved extension refused', r.status === 400, r.status);
@@ -259,21 +278,24 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall('/groups', { token: ex.data.token });
   check('extension sees the same account', r.data.user.login === 'alice' && r.data.groups.length === 2, JSON.stringify(r.data));
   check('prompt hidden until a store address is set', r.data.extensionUrl === null, r.data.extensionUrl);
-  process.env.EXTENSION_URL = 'https://chromewebstore.google.com/detail/test';
+  base = STORE_LINK;
   r = await apiCall('/groups', { token: ex.data.token });
-  check('store address reaches the page', r.data.extensionUrl === process.env.EXTENSION_URL, r.data.extensionUrl);
+  check('store address reaches the page', r.data.extensionUrl === 'https://chromewebstore.google.com/detail/test', r.data.extensionUrl);
+  r = await apiCall('/config');
+  check('store address reaches the landing page', r.data.extensionUrl === 'https://chromewebstore.google.com/detail/test', r.data.extensionUrl);
+  base = MAIN;
 
   const extCancel = await extensionStart(makeProof().challenge);
   const cancelState = new URL(extCancel.headers.get('location')).searchParams.get('state');
   r = await get(`/auth/github/callback?error=access_denied&state=${cancelState}`, { cookie: extCancel.headers.get('set-cookie').split(';')[0] });
   check('extension cancel returns to the extension', r.headers.get('location') === `${extensionTarget}?error=denied`, r.headers.get('location'));
 
-  process.env.ALLOWED_GITHUB_LOGINS = 'alice, Owner-Renamed';
+  base = ALLOWLIST;
   let outcome = await signIn('code-u4');
   check('allowlist blocks others', outcome.error === 'not_allowed', JSON.stringify(outcome));
   outcome = await signIn('code-alice');
   check('allowlist lets alice in', Boolean(outcome.token), JSON.stringify(outcome));
-  process.env.ALLOWED_GITHUB_LOGINS = '';
+  base = MAIN;
 
   await signIn('code-u4');
   await signIn('code-u5');
@@ -331,11 +353,11 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   outcome = await signIn('code-bob');
   check('enabled user can sign in again', r.status === 200 && Boolean(outcome.token), JSON.stringify(outcome));
 
-  process.env.ADMIN_EMAIL = 'alice@example.COM';
+  base = ADMIN_EMAIL;
   const aliceAdmin = (await signIn('code-alice')).token;
   r = await apiCall('/admin/overview', { token: aliceAdmin });
   check('admin found by public email', r.status === 200, r.status);
-  process.env.ADMIN_EMAIL = '';
+  base = MAIN;
   const aliceNormal = (await signIn('code-alice')).token;
   r = await apiCall('/admin/overview', { token: aliceNormal });
   check('admin removed at next sign-in', r.status === 403, r.status);
@@ -344,6 +366,8 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   check('admin can delete a user', r.status === 200, r.status);
   const [[{ leftovers }]] = await connection.query('SELECT COUNT(*) AS leftovers FROM link_groups g LEFT JOIN users u ON u.id = g.user_id WHERE u.id IS NULL AND g.user_id IS NOT NULL');
   check('deleting a user removes their sites', leftovers === 0, leftovers);
+  const [[{ orphanImages }]] = await connection.query('SELECT COUNT(*) AS orphanImages FROM user_backgrounds b LEFT JOIN users u ON u.id = b.user_id WHERE u.id IS NULL');
+  check('deleting a user removes their image', orphanImages === 0, orphanImages);
   r = await apiCall('/groups', { token: outcome.token });
   check('deleted user loses access', r.status === 401, r.status);
   r = await apiCall(`/admin/users/${bobRow.id}`, { token: fresh.owner, method: 'DELETE' });
@@ -374,6 +398,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await fetch(`${base}/privacy.html`);
   check('privacy page is public', r.status === 200 && (await r.text()).includes('never sent to our server'), r.status);
 
+  await connection.end();
   console.log(failed ? `${failed} FAILED` : 'ALL PASSED');
   process.exit(failed ? 1 : 0);
 })().catch((error) => {

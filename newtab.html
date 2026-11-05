@@ -53,38 +53,6 @@
       <ul id="results" class="results" hidden></ul>
     </div>
 
-    <section id="customize" class="card customize" aria-label="Customize your page" hidden>
-      <label>Colour theme
-        <select class="field" data-preference="theme">
-          <option value="aurora">Aurora</option>
-          <option value="ocean">Ocean</option>
-          <option value="sunset">Sunset</option>
-          <option value="forest">Forest</option>
-          <option value="mono">Mono</option>
-        </select>
-      </label>
-      <label>Appearance
-        <select class="field" data-preference="mode">
-          <option value="auto">Match my device</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </label>
-      <label>Site layout
-        <select class="field" data-preference="layout">
-          <option value="tiles">Tiles</option>
-          <option value="list">List</option>
-        </select>
-      </label>
-      <fieldset>
-        <legend>Show on my page</legend>
-        <label class="check"><input type="checkbox" data-preference="showClock"> Clock</label>
-        <label class="check"><input type="checkbox" data-preference="showGreeting"> Greeting and date</label>
-        <label class="check extension-only"><input type="checkbox" data-preference="showMostVisited"> Most visited</label>
-        <label class="check extension-only"><input type="checkbox" data-preference="showBookmarks"> Bookmarks</label>
-      </fieldset>
-    </section>
-
     <section id="groups" class="groups" aria-label="Your sites"></section>
 
     <div id="edit-actions" class="edit-actions" hidden>
@@ -102,6 +70,14 @@
       <div id="bookmarks" class="links"></div>
     </section>
   </main>
+
+  <aside id="customize" class="drawer" aria-label="Customize your page" hidden>
+    <header class="drawer-header">
+      <h2>Customize</h2>
+      <button id="customize-close" class="quiet" type="button">Close</button>
+    </header>
+    <div id="customize-body"></div>
+  </aside>
 
   <script src="newtab.js"></script>
 </body>

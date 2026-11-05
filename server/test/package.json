@@ -1,0 +1,9 @@
+{
+  "name": "home-base-api-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end API tests that run against the built server in Docker.",
+  "dependencies": {
+    "mysql2": "^3.14.0"
+  }
+}
