@@ -7,6 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 read -rp "GitHub App public link name (the slug, from github.com/apps/<slug>): " app_slug
+# Accepts the app's full address as well as just the slug.
+app_slug="${app_slug%/}"
+app_slug="${app_slug##*/}"
 read -rp "GitHub App Client ID: " client_id
 read -rsp "GitHub App Client secret: " client_secret
 echo
