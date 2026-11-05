@@ -1,0 +1,25 @@
+# /etc/nginx/sites-available/chrome.ruhul0.com: only serves chrome.ruhul0.com.
+# HTTPS is added by `certbot --nginx -d chrome.ruhul0.com` once DNS points here.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name chrome.ruhul0.com;
+
+    include /etc/nginx/snippets/glowmore-cloudflare-realip.conf;
+
+    client_max_body_size 512k;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:13100;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

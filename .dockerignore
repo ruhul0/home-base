@@ -1,0 +1,10 @@
+**
+!newtab.html
+!newtab.css
+!newtab.js
+!privacy.html
+!privacy.css
+!icons/*.png
+!server/*.js
+!server/package.json
+!server/package-lock.json

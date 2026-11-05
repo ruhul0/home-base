@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Home Base",
+  "version": "3.0.0",
+  "description": "Your own new tab page: search, your saved sites on every device, most visited pages and bookmarks.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArMpkWAr3h2FM77eHzlfNxTGBrrzeuoxy/S2iYm90BS0s646oBjBOZhNGn8s9fJ3B4OXyhmPAVi34iLGxMr+F6uZuLPnjsRvYxVCplueVw4A99DYLi8b0m0fdd/oQCf3d4aGXqE6nJqU1/Qdl3EcVUWU709meBfqhAgI0Qd7Z0h9puih9kd18Gg6/NuGxJMJE70AsA1sTTw3QIL4b6Rtkt/RmTNNnWOMqkGsGAuQTLQNKX9M+bP2WThsoMMJnMk6XYH5IWqfWSNI1oJD/faTI/c5I9hPsizkbth1E3daHT7a/HejdNNXtiLZhhRvOM5CElhozyoYF6mgmGWYIaFct9QIDAQAB",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "permissions": ["bookmarks", "favicon", "identity", "search", "storage", "topSites"],
+  "host_permissions": ["https://chrome.ruhul0.com/*"]
+}

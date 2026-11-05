@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New Tab</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon32.png">
+  <link rel="stylesheet" href="newtab.css">
+</head>
+<body>
+  <header class="top">
+    <div id="account-actions" class="account-actions" hidden>
+      <span id="user-name" class="user-name"></span>
+      <button id="customize-toggle" class="quiet" type="button" aria-expanded="false" aria-controls="customize">Customize</button>
+      <button id="edit" class="quiet" type="button" aria-pressed="false">Edit</button>
+      <button id="sign-out" class="quiet" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <section id="login" class="login" hidden>
+    <img class="login-logo" src="icons/icon128.png" alt="">
+    <h1>Home Base</h1>
+    <p>Your own start page, with your sites on every device.</p>
+    <button id="github-login" type="button">Continue with GitHub</button>
+    <p id="login-error" class="form-error" role="alert" hidden></p>
+    <a class="privacy-link" href="https://chrome.ruhul0.com/privacy.html" target="_blank" rel="noopener">Privacy</a>
+  </section>
+
+  <main id="app" hidden>
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <aside id="extension-prompt" class="extension-prompt" hidden>
+      <div>
+        <strong>Open this in every new tab?</strong>
+        <p>Add Home Base to Chrome to see your sites, bookmarks and most visited each time you open a tab.</p>
+      </div>
+      <div class="prompt-actions">
+        <a id="extension-link" class="prompt-add" target="_blank" rel="noopener">Add to Chrome</a>
+        <button id="extension-dismiss" class="quiet" type="button">Not now</button>
+      </div>
+    </aside>
+
+    <div class="hero">
+      <span id="time"></span>
+      <p id="greeting"></p>
+      <p id="date"></p>
+    </div>
+
+    <div class="search">
+      <input id="query" type="text" placeholder="Search, or type a site name or address"
+             aria-label="Search the web, your sites and bookmarks" autocomplete="off" spellcheck="false">
+      <ul id="results" class="results" hidden></ul>
+    </div>
+
+    <section id="customize" class="card customize" aria-label="Customize your page" hidden>
+      <label>Colour theme
+        <select class="field" data-preference="theme">
+          <option value="aurora">Aurora</option>
+          <option value="ocean">Ocean</option>
+          <option value="sunset">Sunset</option>
+          <option value="forest">Forest</option>
+          <option value="mono">Mono</option>
+        </select>
+      </label>
+      <label>Appearance
+        <select class="field" data-preference="mode">
+          <option value="auto">Match my device</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+      <label>Site layout
+        <select class="field" data-preference="layout">
+          <option value="tiles">Tiles</option>
+          <option value="list">List</option>
+        </select>
+      </label>
+      <fieldset>
+        <legend>Show on my page</legend>
+        <label class="check"><input type="checkbox" data-preference="showClock"> Clock</label>
+        <label class="check"><input type="checkbox" data-preference="showGreeting"> Greeting and date</label>
+        <label class="check extension-only"><input type="checkbox" data-preference="showMostVisited"> Most visited</label>
+        <label class="check extension-only"><input type="checkbox" data-preference="showBookmarks"> Bookmarks</label>
+      </fieldset>
+    </section>
+
+    <section id="groups" class="groups" aria-label="Your sites"></section>
+
+    <div id="edit-actions" class="edit-actions" hidden>
+      <button id="add-group" type="button">Add group</button>
+      <button id="reset" class="quiet" type="button">Restore original sites</button>
+    </div>
+
+    <section id="top-section" class="card auto" hidden>
+      <h2>Most visited</h2>
+      <div id="top-sites" class="links"></div>
+    </section>
+
+    <section id="bookmark-section" class="card auto" hidden>
+      <h2>Bookmarks</h2>
+      <div id="bookmarks" class="links"></div>
+    </section>
+  </main>
+
+  <script src="newtab.js"></script>
+</body>
+</html>
