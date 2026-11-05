@@ -52,6 +52,28 @@ func newCached[T any]() *cached[T] {
 	return &cached[T]{entries: map[string]*cacheEntry[T]{}}
 }
 
+// forget removes a key, so the next request fetches again.
+func (c *cached[T]) forget(key string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	delete(c.entries, key)
+}
+
+// forgetOlderThan lets a manual refresh fetch again, without letting rapid clicks overload GitHub.
+func (c *cached[T]) forgetOlderThan(key string, age time.Duration) {
+	c.mutex.Lock()
+	entry, found := c.entries[key]
+	c.mutex.Unlock()
+	if !found {
+		return
+	}
+	entry.mutex.Lock()
+	defer entry.mutex.Unlock()
+	if time.Since(entry.fetchedAt) >= age {
+		entry.fetchedAt = time.Time{}
+	}
+}
+
 func (c *cached[T]) get(key string, life time.Duration, fetch func() (T, error)) (T, time.Time, error) {
 	c.mutex.Lock()
 	entry, found := c.entries[key]
@@ -82,23 +104,32 @@ func (c *cached[T]) get(key string, life time.Duration, fetch func() (T, error))
 
 // DevServices holds the data the developer dashboard fetches from outside.
 type DevServices struct {
-	github   *cached[GitHubDashboard]
-	news     *cached[[]NewsStory]
-	monitors *cached[MonitorResult]
-	client   *http.Client
+	github        *cached[GitHubDashboard]
+	private       *cached[GitHubDashboard]
+	connectStates *expiring[connectState]
+	tokenLocks    *userLocks
+	news          *cached[[]NewsStory]
+	monitors      *cached[MonitorResult]
+	client        *http.Client
 }
 
 func newDevServices() *DevServices {
 	return &DevServices{
-		github:   newCached[GitHubDashboard](),
-		news:     newCached[[]NewsStory](),
-		monitors: newCached[MonitorResult](),
-		client:   newMonitorClient(),
+		github:        newCached[GitHubDashboard](),
+		private:       newCached[GitHubDashboard](),
+		connectStates: newExpiring[connectState](),
+		tokenLocks:    &userLocks{locks: map[int64]*sync.Mutex{}},
+		news:          newCached[[]NewsStory](),
+		monitors:      newCached[MonitorResult](),
+		client:        newMonitorClient(),
 	}
 }
 
 func (a *App) registerDevRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/dev/github", a.signedIn(a.handleDevGitHub))
+	mux.HandleFunc("POST /api/dev/github/connect", a.signedIn(a.handleGitHubConnectStart))
+	mux.HandleFunc("DELETE /api/dev/github/connection", a.signedIn(a.handleGitHubDisconnect))
+	mux.HandleFunc("GET /auth/github-app/callback", noStore(a.handleGitHubConnectCallback))
 	mux.HandleFunc("GET /api/dev/news", a.signedIn(a.handleDevNews))
 	mux.HandleFunc("GET /api/dev/workspace", a.signedIn(a.handleGetWorkspace))
 	mux.HandleFunc("PUT /api/dev/workspace", a.signedIn(a.handlePutWorkspace))
@@ -107,6 +138,7 @@ func (a *App) registerDevRoutes(mux *http.ServeMux) {
 
 // GitHubRepo is one of the user's recently updated public repositories.
 type GitHubRepo struct {
+	Private     bool   `json:"private"`
 	Name        string `json:"name"`
 	URL         string `json:"url"`
 	Description string `json:"description"`
@@ -143,18 +175,22 @@ type GitHubDashboard struct {
 	Issues          []GitHubItem  `json:"issues"`
 	Events          []GitHubEvent `json:"events"`
 	Partial         bool          `json:"partial"`
+	ReviewRequests  []GitHubItem  `json:"reviewRequests"`
 	FromRecentRepos bool          `json:"fromRecentRepos"`
 }
 
-// githubGet reads public data. The app's own credentials are only used for GitHub's higher rate limit.
-func githubGet(ctx context.Context, path string, target any) error {
+// githubGetAs reads as the given user if a token is provided. Otherwise it reads public data, using
+// the sign-in app's credentials only for GitHub's higher rate limit.
+func githubGetAs(ctx context.Context, token, path string, target any) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, envOr("GITHUB_API_URL", "https://api.github.com")+path, nil)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("User-Agent", "home-base")
-	if githubConfigured() {
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	} else if githubConfigured() {
 		request.SetBasicAuth(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
 	}
 	response, err := githubClient.Do(request)
@@ -162,6 +198,9 @@ func githubGet(ctx context.Context, path string, target any) error {
 		return fmt.Errorf("request GitHub %s: %w", strings.SplitN(path, "?", 2)[0], err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized && token != "" {
+		return errGitHubUnauthorized
+	}
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("GitHub %s returned %d", strings.SplitN(path, "?", 2)[0], response.StatusCode)
 	}
@@ -176,9 +215,9 @@ func safeLink(value string) string {
 	return address
 }
 
-func searchGitHubItems(ctx context.Context, login, kind string) ([]GitHubItem, error) {
+func searchGitHubItems(ctx context.Context, token, search string) ([]GitHubItem, error) {
 	query := url.Values{
-		"q":        {fmt.Sprintf("author:%s is:open is:%s", login, kind)},
+		"q":        {search},
 		"sort":     {"updated"},
 		"per_page": {"6"},
 	}
@@ -191,7 +230,7 @@ func searchGitHubItems(ctx context.Context, login, kind string) ([]GitHubItem, e
 			RepositoryURL string `json:"repository_url"`
 		} `json:"items"`
 	}
-	if err := githubGet(ctx, "/search/issues?"+query.Encode(), &found); err != nil {
+	if err := githubGetAs(ctx, token, "/search/issues?"+query.Encode(), &found); err != nil {
 		return nil, err
 	}
 	items := []GitHubItem{}
@@ -208,7 +247,7 @@ func searchGitHubItems(ctx context.Context, login, kind string) ([]GitHubItem, e
 
 // openItemsFromRepos lists the user's own open pull requests and issues in the given repositories.
 // It returns false if any repository couldn't be read.
-func openItemsFromRepos(ctx context.Context, login string, repos []GitHubRepo) ([]GitHubItem, []GitHubItem, bool) {
+func openItemsFromRepos(ctx context.Context, token, login string, repos []GitHubRepo) ([]GitHubItem, []GitHubItem, bool) {
 	type repoItem struct {
 		GitHubItem
 		isPullRequest bool
@@ -235,7 +274,7 @@ func openItemsFromRepos(ctx context.Context, login string, repos []GitHubRepo) (
 				UpdatedAt   string          `json:"updated_at"`
 				PullRequest json.RawMessage `json:"pull_request"`
 			}
-			err := githubGet(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/issues?"+query, &items)
+			err := githubGetAs(ctx, token, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/issues?"+query, &items)
 			mutex.Lock()
 			defer mutex.Unlock()
 			if err != nil {
@@ -267,9 +306,11 @@ func openItemsFromRepos(ctx context.Context, login string, repos []GitHubRepo) (
 	return pullRequests, issues, complete
 }
 
-func fetchGitHubDashboard(ctx context.Context, login string) (GitHubDashboard, error) {
+// fetchGitHubDashboard reads as the user when a token is provided, which includes the private
+// repositories they've installed the app on. Without one, it reads public data only.
+func fetchGitHubDashboard(ctx context.Context, login, token string) (GitHubDashboard, error) {
 	escaped := url.PathEscape(login)
-	dashboard := GitHubDashboard{Login: login, Repos: []GitHubRepo{}, PullRequests: []GitHubItem{}, Issues: []GitHubItem{}, Events: []GitHubEvent{}}
+	dashboard := GitHubDashboard{Login: login, Repos: []GitHubRepo{}, PullRequests: []GitHubItem{}, Issues: []GitHubItem{}, ReviewRequests: []GitHubItem{}, Events: []GitHubEvent{}}
 
 	var profile struct {
 		Name        string `json:"name"`
@@ -277,7 +318,7 @@ func fetchGitHubDashboard(ctx context.Context, login string) (GitHubDashboard, e
 		Followers   int    `json:"followers"`
 		Following   int    `json:"following"`
 	}
-	if err := githubGet(ctx, "/users/"+escaped, &profile); err != nil {
+	if err := githubGetAs(ctx, token, "/users/"+escaped, &profile); err != nil {
 		return dashboard, err
 	}
 	dashboard.Name = profile.Name
@@ -292,19 +333,35 @@ func fetchGitHubDashboard(ctx context.Context, login string) (GitHubDashboard, e
 		Language    string `json:"language"`
 		Stars       int    `json:"stargazers_count"`
 		PushedAt    string `json:"pushed_at"`
+		Private     bool   `json:"private"`
 	}
-	if err := githubGet(ctx, "/users/"+escaped+"/repos?sort=pushed&per_page=6", &repos); err != nil {
+	reposPath := "/users/" + escaped + "/repos?sort=pushed&per_page=6"
+	if token != "" {
+		reposPath = "/user/repos?sort=pushed&per_page=8"
+	}
+	if err := githubGetAs(ctx, token, reposPath, &repos); err != nil {
+		if errors.Is(err, errGitHubUnauthorized) {
+			return dashboard, err
+		}
 		log.Printf("GitHub dashboard: %v", err)
 		dashboard.Partial = true
 	}
 	for _, repo := range repos {
 		if link := safeLink(repo.HTMLURL); link != "" {
-			dashboard.Repos = append(dashboard.Repos, GitHubRepo{Name: repo.FullName, URL: link, Description: repo.Description, Language: repo.Language, Stars: repo.Stars, PushedAt: repo.PushedAt})
+			dashboard.Repos = append(dashboard.Repos, GitHubRepo{Private: repo.Private, Name: repo.FullName, URL: link, Description: repo.Description, Language: repo.Language, Stars: repo.Stars, PushedAt: repo.PushedAt})
 		}
 	}
 
-	pullRequests, pullRequestsErr := searchGitHubItems(ctx, login, "pr")
-	issues, issuesErr := searchGitHubItems(ctx, login, "issue")
+	pullRequests, pullRequestsErr := searchGitHubItems(ctx, token, fmt.Sprintf("author:%s is:open is:pr", login))
+	issues, issuesErr := searchGitHubItems(ctx, token, fmt.Sprintf("author:%s is:open is:issue", login))
+	if token != "" {
+		if requests, err := searchGitHubItems(ctx, token, fmt.Sprintf("review-requested:%s is:open is:pr", login)); err != nil {
+			log.Printf("GitHub dashboard: %v", err)
+			dashboard.Partial = true
+		} else {
+			dashboard.ReviewRequests = requests
+		}
+	}
 	if pullRequestsErr == nil && issuesErr == nil {
 		dashboard.PullRequests = pullRequests
 		dashboard.Issues = issues
@@ -313,7 +370,7 @@ func fetchGitHubDashboard(ctx context.Context, login string) (GitHubDashboard, e
 		log.Printf("GitHub dashboard: search unavailable, reading recent repositories: %v", errors.Join(pullRequestsErr, issuesErr))
 		dashboard.FromRecentRepos = true
 		var complete bool
-		dashboard.PullRequests, dashboard.Issues, complete = openItemsFromRepos(ctx, login, dashboard.Repos)
+		dashboard.PullRequests, dashboard.Issues, complete = openItemsFromRepos(ctx, token, login, dashboard.Repos)
 		if !complete {
 			dashboard.Partial = true
 		}
@@ -326,7 +383,11 @@ func fetchGitHubDashboard(ctx context.Context, login string) (GitHubDashboard, e
 		} `json:"repo"`
 		CreatedAt string `json:"created_at"`
 	}
-	if err := githubGet(ctx, "/users/"+escaped+"/events/public?per_page=8", &events); err != nil {
+	eventsPath := "/users/" + escaped + "/events/public?per_page=8"
+	if token != "" {
+		eventsPath = "/users/" + escaped + "/events?per_page=8"
+	}
+	if err := githubGetAs(ctx, token, eventsPath, &events); err != nil {
 		log.Printf("GitHub dashboard: %v", err)
 		dashboard.Partial = true
 	}
@@ -334,23 +395,6 @@ func fetchGitHubDashboard(ctx context.Context, login string) (GitHubDashboard, e
 		dashboard.Events = append(dashboard.Events, GitHubEvent{Type: event.Type, Repo: event.Repo.Name, CreatedAt: event.CreatedAt})
 	}
 	return dashboard, nil
-}
-
-func (a *App) handleDevGitHub(w http.ResponseWriter, r *http.Request, current session) {
-	user, err := a.store.getUser(r.Context(), current.userID)
-	if err != nil {
-		writeServerError(w, err)
-		return
-	}
-	dashboard, fetchedAt, err := a.dev.github.get(strings.ToLower(user.Login), githubDataLife, func() (GitHubDashboard, error) {
-		return fetchGitHubDashboard(r.Context(), user.Login)
-	})
-	if err != nil {
-		log.Printf("GitHub dashboard failed: %v", err)
-		writeError(w, http.StatusBadGateway, "GitHub data isn't available right now.")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": dashboard, "fetchedAt": fetchedAt})
 }
 
 // NewsStory is one Hacker News story.

@@ -18,7 +18,7 @@ export default function PrivacyPage() {
 
       <h2>What our server requests for you</h2>
       <p>
-        To show the developer panels, our server requests your public profile, repositories, issues, pull requests and activity from GitHub, top stories from Hacker News, and any addresses you add as monitors. Those sites see the request as coming from our server, not from you. Your account&apos;s GitHub password and private repositories are never involved. Text in the dev toolbox stays in your browser and is never sent to our server.
+        To show the developer panels, our server requests your public profile, repositories, issues, pull requests and activity from GitHub, top stories from Hacker News, and any addresses you add as monitors. Those sites see the request as coming from our server, not from you. Your GitHub password is never involved, and private repositories are only read if you choose to connect them. Text in the dev toolbox stays in your browser and is never sent to our server.
       </p>
 
       <h2>What GitHub shares</h2>
@@ -29,6 +29,11 @@ export default function PrivacyPage() {
       <h2>Who can see your data</h2>
       <p>
         Other users can&apos;t see your data. The site&apos;s administrator can see each account&apos;s username, when it joined and was last seen, and how many groups, links and sessions it has. The admin dashboard doesn&apos;t show the sites or images you save, though the administrator operates the server and database they&apos;re stored on.
+      </p>
+
+      <h2>Optional private GitHub access</h2>
+      <p>
+        You can choose to connect a separate Home Base GitHub App, which has read-only access to the repositories you select. It can&apos;t change your code or settings. Its access tokens are encrypted on our server, are never sent to your browser and are never shown to the administrator through the site. Pull requests, issues and repository details it reads are held in memory for a few minutes and not saved to the database. Disconnecting deletes the tokens and withdraws the access on GitHub, and you can also remove the app from your GitHub settings at any time.
       </p>
 
       <h2>What the Chrome extension reads</h2>

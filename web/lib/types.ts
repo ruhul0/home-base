@@ -72,12 +72,22 @@ export interface GitHubDashboard {
   publicRepos: number;
   followers: number;
   following: number;
-  repos: { name: string; url: string; description: string; language: string; stars: number; pushedAt: string }[];
+  reviewRequests: GitHubItem[];
+  repos: { private: boolean; name: string; url: string; description: string; language: string; stars: number; pushedAt: string }[];
   pullRequests: GitHubItem[];
   issues: GitHubItem[];
   events: { type: string; repo: string; createdAt: string }[];
   partial: boolean;
   fromRecentRepos: boolean;
+}
+
+export interface GitHubResponse {
+  data: GitHubDashboard;
+  fetchedAt: string;
+  available: boolean;
+  connected: boolean;
+  needsReconnect: boolean;
+  manageUrl?: string;
 }
 
 export interface NewsStory {

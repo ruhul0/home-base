@@ -485,6 +485,100 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   check('monitors report a failing site', monitorDown?.up === false && monitorDown.status === 500 && monitorDown.problem === 'Returned HTTP 500.', JSON.stringify(monitorDown));
   base = MAIN;
 
+  const noConnection = await apiCall('/dev/github', { token: dev.alice });
+  check('private GitHub is offered but off by default', noConnection.data.available === true && noConnection.data.connected === false && noConnection.data.data.repos.every((repo) => !repo.private), JSON.stringify(noConnection.data).slice(0, 200));
+  r = await apiCall('/dev/github/connect', { method: 'POST' });
+  check('connecting needs sign-in', r.status === 401, r.status);
+
+  const fakeGitHub = async (path) => (await fetch(`http://fake-github:4000${path}`)).json();
+  const startConnect = async (token) => {
+    const res = await fetch(`${base}/api/dev/github/connect`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-real-ip': nextIp() } });
+    const data = await res.json();
+    const address = new URL(data.url);
+    return { status: res.status, address, state: address.searchParams.get('state'), cookie: res.headers.get('set-cookie').split(';')[0], setCookie: res.headers.get('set-cookie') };
+  };
+  const finishConnect = async (code, state, cookie) => {
+    const res = await fetch(`${base}/auth/github-app/callback?code=${code}&state=${state}`, { redirect: 'manual', headers: cookie ? { cookie } : {} });
+    return res.headers.get('location');
+  };
+  const tokenRow = async (login) => {
+    const [rows] = await connection.query('SELECT t.access_token AS access, t.refresh_token AS refresh FROM user_github_tokens t JOIN users u ON u.id = t.user_id WHERE u.login = ?', [login]);
+    return rows[0] ?? null;
+  };
+
+  let connect = await startConnect(dev.alice);
+  check('connecting asks GitHub with no broad scopes', connect.address.href.startsWith('http://fake-github:4000/login/oauth/authorize') && connect.address.searchParams.get('client_id') === 'test-app-client' && !connect.address.searchParams.has('scope'), connect.address.href);
+  check('connect cookie is HttpOnly, Secure, Lax', /HttpOnly/i.test(connect.setCookie) && /Secure/i.test(connect.setCookie) && /SameSite=Lax/i.test(connect.setCookie), connect.setCookie);
+  let landed = await finishConnect('app-alice', connect.state, null);
+  check('connecting refused without the browser cookie', landed.includes('github=failed'), landed);
+  check('a refused attempt stores nothing', (await tokenRow('alice')) === null);
+  landed = await finishConnect('app-alice', connect.state, connect.cookie);
+  check('a connect link works only once', landed.includes('github=failed'), landed);
+
+  connect = await startConnect(dev.alice);
+  landed = await finishConnect('app-bob', connect.state, connect.cookie);
+  check('another GitHub account is refused', landed.includes('github=wrong_account'), landed);
+  check('the wrong account leaves nothing stored', (await tokenRow('alice')) === null);
+  check("the wrong account's grant is revoked", (await fakeGitHub('/__test/last-token')).grantsRevoked === 1);
+
+  connect = await startConnect(dev.alice);
+  r = await fetch(`${base}/auth/github-app/callback?error=access_denied&state=${connect.state}`, { redirect: 'manual', headers: { cookie: connect.cookie } });
+  check('cancelling on GitHub is reported', r.headers.get('location').includes('github=cancelled'), r.headers.get('location'));
+
+  connect = await startConnect(dev.alice);
+  landed = await finishConnect('app-new', connect.state, connect.cookie);
+  check('with no installation, connecting continues to choosing repositories', landed === 'http://fake-github:4000/apps/home-base-test/installations/new', landed);
+  r = await apiCall('/dev/github/connection', { token: dev.alice, method: 'DELETE' });
+
+  connect = await startConnect(dev.alice);
+  landed = await finishConnect('app-alice', connect.state, connect.cookie);
+  check('connecting succeeds', landed.includes('github=connected'), landed);
+
+  const stored = await tokenRow('alice');
+  check('tokens are encrypted in MySQL', stored && !stored.access.includes('app-token') && !stored.refresh.includes('refresh-alice') && stored.access.length > 30, JSON.stringify(stored));
+
+  r = await apiCall('/dev/github', { token: dev.alice });
+  check('connected users see private repositories', r.data.connected === true && r.data.data.repos[0].name === 'alice/secret-project' && r.data.data.repos[0].private === true, JSON.stringify(r.data).slice(0, 300));
+  check('connected users see review requests', r.data.data.reviewRequests[0]?.title === 'Please review', JSON.stringify(r.data.data.reviewRequests));
+  check('connected users see private activity', r.data.data.events[0]?.repo === 'alice/secret-project', JSON.stringify(r.data.data.events));
+  check('tokens never reach the browser', !JSON.stringify(r.data).includes('app-token') && !JSON.stringify(r.data).includes('refresh-alice') && !JSON.stringify(r.data).includes('test-app-secret'));
+  check('the app gets a link to manage repositories', r.data.manageUrl.endsWith('/apps/home-base-test/installations/new'), r.data.manageUrl);
+
+  r = await apiCall('/dev/github', { token: dev.owner });
+  check("other users never see someone's private repositories", !JSON.stringify(r.data).includes('secret-project') && r.data.connected !== true, JSON.stringify(r.data).slice(0, 200));
+  r = await apiCall('/admin/overview', { token: dev.owner });
+  check('admins never see tokens or private repositories', !JSON.stringify(r.data).includes('secret-project') && !JSON.stringify(r.data).includes(stored.access));
+
+  await connection.query("UPDATE user_github_tokens SET access_expires = '2020-01-01 00:00:00' WHERE user_id = (SELECT id FROM users WHERE login = 'alice')");
+  r = await apiCall('/dev/github?fresh=1', { token: dev.alice });
+  check('an expired token is refreshed automatically', r.data.connected === true && (await fakeGitHub('/__test/last-token')).token === 'app-token-alice-2', JSON.stringify(await fakeGitHub('/__test/last-token')));
+  const afterRefresh = await tokenRow('alice');
+  check('the refreshed token is saved encrypted', afterRefresh.access !== stored.access && !afterRefresh.access.includes('app-token'));
+
+  await connection.query("UPDATE user_github_tokens SET access_expires = '2020-01-01 00:00:00' WHERE user_id = (SELECT id FROM users WHERE login = 'alice')");
+  r = await apiCall('/dev/github?fresh=1', { token: dev.alice });
+  check('a rejected refresh asks the user to reconnect', r.status === 200 && r.data.connected === false && r.data.needsReconnect === true && !JSON.stringify(r.data).includes('secret-project'), JSON.stringify(r.data).slice(0, 200));
+  check('a lost connection removes the stored tokens', (await tokenRow('alice')) === null);
+
+  connect = await startConnect(dev.alice);
+  await finishConnect('app-alice', connect.state, connect.cookie);
+  r = await apiCall('/dev/github?fresh=1', { token: dev.alice });
+  check('reconnecting restores private data', r.data.connected === true && JSON.stringify(r.data).includes('secret-project'), JSON.stringify(r.data).slice(0, 200));
+  await fakeGitHub('/__test/revoke-all');
+  r = await apiCall('/dev/github?fresh=1', { token: dev.alice });
+  check('revoking on GitHub stops private data straight away', r.data.connected === false && r.data.needsReconnect === true && !JSON.stringify(r.data).includes('secret-project'), JSON.stringify(r.data).slice(0, 200));
+  await fakeGitHub('/__test/restore');
+
+  connect = await startConnect(dev.alice);
+  await finishConnect('app-alice', connect.state, connect.cookie);
+  const revokedBefore = (await fakeGitHub('/__test/last-token')).grantsRevoked;
+  r = await apiCall('/dev/github/connection', { token: dev.alice, method: 'DELETE' });
+  check('disconnecting works', r.status === 200, r.status);
+  check('disconnecting deletes the tokens', (await tokenRow('alice')) === null);
+  check('disconnecting revokes the grant on GitHub', (await fakeGitHub('/__test/last-token')).grantsRevoked === revokedBefore + 1);
+  r = await apiCall('/dev/github', { token: dev.alice });
+  check('disconnecting removes private data straight away', r.data.connected === false && !JSON.stringify(r.data).includes('secret-project'), JSON.stringify(r.data).slice(0, 200));
+
   let limited = false;
   for (let i = 0; i < 31; i += 1) {
     const res = await fetch(`${base}/auth/github/start?challenge=${makeProof().challenge}`, { redirect: 'manual', headers: { 'x-real-ip': 'flood' } });

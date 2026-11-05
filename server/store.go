@@ -44,6 +44,15 @@ var schema = []string{
 	   data MEDIUMTEXT NOT NULL,
 	   CONSTRAINT user_workspaces_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 	 ) CHARACTER SET utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS user_github_tokens (
+	   user_id INT PRIMARY KEY,
+	   access_token TEXT NOT NULL,
+	   access_expires DATETIME NULL,
+	   refresh_token TEXT NULL,
+	   refresh_expires DATETIME NULL,
+	   connected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	   CONSTRAINT user_github_tokens_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+	 )`,
 	`CREATE TABLE IF NOT EXISTS sessions (
 	   token_hash CHAR(64) PRIMARY KEY,
 	   user_id INT NOT NULL,

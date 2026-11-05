@@ -2,7 +2,7 @@ import { apiBase, KEYS, storage } from "./browser";
 import type {
   AdminTotals,
   AdminUser,
-  GitHubDashboard,
+  GitHubResponse,
   Group,
   GroupsResponse,
   MonitorResult,
@@ -76,7 +76,9 @@ export const api = {
     return version;
   },
   dev: {
-    github: () => request<{ data: GitHubDashboard; fetchedAt: string }>("/api/dev/github"),
+    github: (fresh = false) => request<GitHubResponse>(`/api/dev/github${fresh ? "?fresh=1" : ""}`),
+    connectGitHub: () => request<{ url: string }>("/api/dev/github/connect", "POST"),
+    disconnectGitHub: () => request("/api/dev/github/connection", "DELETE"),
     news: () => request<{ stories: NewsStory[]; fetchedAt: string }>("/api/dev/news"),
     workspace: () => request<Workspace>("/api/dev/workspace"),
     putWorkspace: (workspace: Workspace) => request("/api/dev/workspace", "PUT", workspace),

@@ -26,6 +26,11 @@ x-app-environment: &app-environment
   EXTENSION_IDS: ckmmmpglhbeeeppgclggngmgdjogmlmh
   ADMIN_GITHUB_ID: "1001"
   HN_API_URL: http://fake-github:4000
+  GITHUB_APP_SLUG: home-base-test
+  GITHUB_APP_CLIENT_ID: test-app-client
+  GITHUB_APP_CLIENT_SECRET: test-app-secret
+  TOKEN_ENCRYPTION_KEY: a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s=
+  GITHUB_REFRESH_FLOOR_SECONDS: "0"
 
 x-tests: &tests
   build: .

@@ -13,6 +13,10 @@ const profiles = {
   'code-u6': { id: 6006, login: 'user6', email: null },
 };
 
+let lastAppToken = null;
+let revokedAll = false;
+let grantsRevoked = 0;
+
 http.createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
 
@@ -20,7 +24,19 @@ http.createServer((req, res) => {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
-      const { code, client_secret: secret } = JSON.parse(body);
+      const parsed = JSON.parse(body);
+      const { code, client_secret: secret } = parsed;
+      if (parsed.client_id === 'test-app-client') {
+        if (secret !== 'test-app-secret') return res.end(JSON.stringify({ error: 'incorrect_client_credentials' }));
+        const life = { expires_in: 28800, refresh_token_expires_in: 15552000 };
+        if (parsed.grant_type === 'refresh_token') {
+          if (parsed.refresh_token !== 'refresh-alice') return res.end(JSON.stringify({ error: 'bad_refresh_token' }));
+          return res.end(JSON.stringify({ access_token: 'app-token-alice-2', refresh_token: 'refresh-alice-2', ...life }));
+        }
+        const issued = { 'app-alice': 'app-token-alice', 'app-new': 'app-token-new', 'app-bob': 'app-token-bob' }[code];
+        if (!issued) return res.end(JSON.stringify({ error: 'bad_verification_code' }));
+        return res.end(JSON.stringify({ access_token: issued, refresh_token: 'refresh-alice', ...life }));
+      }
       if (secret !== 'test-secret' || !profiles[code]) {
         res.end(JSON.stringify({ error: 'bad_verification_code' }));
         return;
@@ -28,6 +44,48 @@ http.createServer((req, res) => {
       res.end(JSON.stringify({ access_token: code }));
     });
     return;
+  }
+
+  const bearer = (req.headers.authorization || '').replace('Bearer ', '');
+  const appToken = bearer.startsWith('app-token-') ? bearer : null;
+  if (appToken) {
+    lastAppToken = appToken;
+    if (revokedAll) {
+      res.statusCode = 401;
+      return res.end('{}');
+    }
+  }
+  if (req.url === '/__test/last-token') return res.end(JSON.stringify({ token: lastAppToken, grantsRevoked }));
+  if (req.url === '/__test/revoke-all') {
+    revokedAll = true;
+    return res.end('{}');
+  }
+  if (req.url === '/__test/restore') {
+    revokedAll = false;
+    return res.end('{}');
+  }
+  if (req.method === 'DELETE' && req.url === '/applications/test-app-client/grant') {
+    if (req.headers.authorization !== `Basic ${Buffer.from('test-app-client:test-app-secret').toString('base64')}`) {
+      res.statusCode = 401;
+      return res.end('{}');
+    }
+    grantsRevoked += 1;
+    res.statusCode = 204;
+    return res.end();
+  }
+  if (appToken) {
+    const identity = appToken === 'app-token-bob' ? { id: 3003, login: 'bob' } : { id: 2002, login: 'alice' };
+    if (req.url === '/user') return res.end(JSON.stringify(identity));
+    if (req.url.startsWith('/user/installations')) return res.end(JSON.stringify({ total_count: appToken === 'app-token-new' ? 0 : 1 }));
+    if (req.url.startsWith('/user/repos')) {
+      return res.end(JSON.stringify([{ full_name: 'alice/secret-project', html_url: 'https://github.com/alice/secret-project', description: '', language: 'Go', stargazers_count: 0, pushed_at: '2026-11-05T00:00:00Z', private: true }]));
+    }
+    if (req.url.startsWith('/users/alice/events?')) {
+      return res.end(JSON.stringify([{ type: 'PushEvent', repo: { name: 'alice/secret-project' }, created_at: '2026-11-05T00:00:00Z' }]));
+    }
+    if (req.url.startsWith('/search/issues') && decodeURIComponent(req.url).replaceAll('+', ' ').includes('review-requested:alice')) {
+      return res.end(JSON.stringify({ items: [{ title: 'Please review', html_url: 'https://github.com/alice/secret-project/pull/9', number: 9, updated_at: '2026-11-05T00:00:00Z', repository_url: 'https://api.github.com/repos/alice/secret-project' }] }));
+    }
   }
 
   if (req.url === '/user') {
