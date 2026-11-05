@@ -25,6 +25,7 @@ x-app-environment: &app-environment
   MAX_USERS: "5"
   EXTENSION_IDS: ckmmmpglhbeeeppgclggngmgdjogmlmh
   ADMIN_GITHUB_ID: "1001"
+  HN_API_URL: http://fake-github:4000
 
 x-tests: &tests
   build: .
@@ -90,11 +91,20 @@ services:
       <<: *app-environment
       EXTENSION_URL: https://chromewebstore.google.com/detail/test
 
+  # Monitors refuse private addresses, and every test service is on one. This setting exists only
+  # so the tests can reach a stand-in site. The production compose file never sets it.
+  app-monitors:
+    <<: *app
+    environment:
+      <<: *app-environment
+      MONITOR_ALLOW_PRIVATE: "true"
+
   runner:
     <<: *tests
     command: ["node", "flow.test.js"]
     depends_on:
       - app
+      - app-monitors
       - app-allowlist
       - app-admin-email
       - app-store-link

@@ -229,6 +229,18 @@ export function CustomizePanel({
 
             <Separator />
 
+            <div className="grid gap-3">
+              <Label>Developer panels</Label>
+              <SwitchField label="GitHub" checked={preferences.showGitHub} onChange={(value) => onSet("showGitHub", value)} />
+              <SwitchField label="Monitors" checked={preferences.showMonitors} onChange={(value) => onSet("showMonitors", value)} />
+              <SwitchField label="Todos" checked={preferences.showTodos} onChange={(value) => onSet("showTodos", value)} />
+              <SwitchField label="Scratchpad" checked={preferences.showNotes} onChange={(value) => onSet("showNotes", value)} />
+              <SwitchField label="Hacker News" checked={preferences.showNews} onChange={(value) => onSet("showNews", value)} />
+              <SwitchField label="Time and Unix clock" checked={preferences.showClocks} onChange={(value) => onSet("showClocks", value)} />
+            </div>
+
+            <Separator />
+
             <div className="grid gap-1.5">
               <Label htmlFor="greeting-text">Custom greeting</Label>
               <Input id="greeting-text" value={preferences.greetingText} maxLength={60} placeholder='Leave empty for "Good morning"' onChange={(event) => onSet("greetingText", event.target.value)} />

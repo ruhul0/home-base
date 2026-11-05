@@ -1,5 +1,15 @@
 import { apiBase, KEYS, storage } from "./browser";
-import type { AdminTotals, AdminUser, Group, GroupsResponse, Preferences } from "./types";
+import type {
+  AdminTotals,
+  AdminUser,
+  GitHubDashboard,
+  Group,
+  GroupsResponse,
+  MonitorResult,
+  NewsStory,
+  Preferences,
+  Workspace,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -64,6 +74,13 @@ export const api = {
     if (!response.ok) throw new ApiError(response.status, "That image couldn't be used.");
     const { version } = (await response.json()) as { version: string };
     return version;
+  },
+  dev: {
+    github: () => request<{ data: GitHubDashboard; fetchedAt: string }>("/api/dev/github"),
+    news: () => request<{ stories: NewsStory[]; fetchedAt: string }>("/api/dev/news"),
+    workspace: () => request<Workspace>("/api/dev/workspace"),
+    putWorkspace: (workspace: Workspace) => request("/api/dev/workspace", "PUT", workspace),
+    monitors: () => request<{ results: MonitorResult[] }>("/api/dev/monitors"),
   },
   admin: {
     overview: () =>

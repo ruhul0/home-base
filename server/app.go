@@ -141,6 +141,7 @@ type App struct {
 	states    *expiring[loginState]
 	codes     *expiring[loginCode]
 	starts    *startLimiter
+	dev       *DevServices
 }
 
 func newApp(store *Store, publicDir string) *App {
@@ -150,6 +151,7 @@ func newApp(store *Store, publicDir string) *App {
 		states:    newExpiring[loginState](),
 		codes:     newExpiring[loginCode](),
 		starts:    &startLimiter{counts: map[string]startCounter{}},
+		dev:       newDevServices(),
 	}
 }
 
@@ -176,6 +178,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/users/{id}/disable", a.adminOnly(a.handleAdminDisable))
 	mux.HandleFunc("POST /api/admin/users/{id}/enable", a.adminOnly(a.handleAdminEnable))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", a.adminOnly(a.handleAdminDelete))
+
+	a.registerDevRoutes(mux)
 
 	mux.HandleFunc("/api/", noStore(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Not found.")

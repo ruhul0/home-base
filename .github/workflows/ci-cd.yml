@@ -24,6 +24,7 @@ jobs:
         run: |
           test -z "$(gofmt -l .)"
           go vet ./...
+          go test ./...
 
       - uses: actions/setup-node@v4
         with:

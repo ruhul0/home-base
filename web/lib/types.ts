@@ -50,6 +50,65 @@ export interface Preferences {
   showGroupTitles: boolean;
   showMostVisited: boolean;
   showBookmarks: boolean;
+  showGitHub: boolean;
+  showNews: boolean;
+  showMonitors: boolean;
+  showTodos: boolean;
+  showNotes: boolean;
+  showClocks: boolean;
+}
+
+export interface GitHubItem {
+  title: string;
+  url: string;
+  repo: string;
+  number: number;
+  updatedAt: string;
+}
+
+export interface GitHubDashboard {
+  login: string;
+  name: string;
+  publicRepos: number;
+  followers: number;
+  following: number;
+  repos: { name: string; url: string; description: string; language: string; stars: number; pushedAt: string }[];
+  pullRequests: GitHubItem[];
+  issues: GitHubItem[];
+  events: { type: string; repo: string; createdAt: string }[];
+  partial: boolean;
+}
+
+export interface NewsStory {
+  title: string;
+  url: string;
+  discussion: string;
+  score: number;
+  comments: number;
+}
+
+export interface Monitor {
+  name: string;
+  url: string;
+}
+
+export interface MonitorResult extends Monitor {
+  up: boolean;
+  status: number;
+  ms: number;
+  problem?: string;
+  checkedAt: string;
+}
+
+export interface Todo {
+  text: string;
+  done: boolean;
+}
+
+export interface Workspace {
+  monitors: Monitor[];
+  todos: Todo[];
+  notes: string;
 }
 
 export interface AdminTotals {

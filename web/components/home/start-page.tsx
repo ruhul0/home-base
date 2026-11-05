@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckIcon, PaletteIcon, PencilIcon, PlusIcon, RotateCcwIcon, ShieldIcon, LogOutIcon } from "lucide-react";
+import { CheckIcon, CommandIcon, KeyboardIcon, LogOutIcon, PaletteIcon, PencilIcon, PlusIcon, RotateCcwIcon, ShieldIcon, WrenchIcon } from "lucide-react";
+import { ClocksCard } from "@/components/dev/clocks-card";
+import { CommandPalette, type PaletteAction } from "@/components/dev/command-palette";
+import { GitHubCard } from "@/components/dev/github-card";
+import { NewsCard } from "@/components/dev/news-card";
+import { ShortcutsDialog } from "@/components/dev/shortcuts-dialog";
+import { ToolboxDialog } from "@/components/dev/toolbox-dialog";
+import { WorkspaceCards } from "@/components/dev/workspace-cards";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api, ApiError, clearLocalSession, setToken, SignedOutError } from "@/lib/api";
@@ -24,6 +31,16 @@ import { SearchBox } from "./search-box";
 const SAVE_DELAY_MS = 500;
 const MAX_BOOKMARKS = 16;
 const MAX_TOP_SITES = 8;
+const TOOL_COMMANDS = [
+  { tool: "json", label: "Format JSON", keywords: "minify pretty" },
+  { tool: "jwt", label: "Decode a JWT", keywords: "token" },
+  { tool: "base64", label: "Base64 encode or decode", keywords: "" },
+  { tool: "url", label: "URL encode or decode", keywords: "percent" },
+  { tool: "time", label: "Convert a timestamp", keywords: "unix epoch date" },
+  { tool: "uuid", label: "Generate UUIDs", keywords: "guid" },
+  { tool: "hash", label: "Hash text", keywords: "sha256 sha1 sha512" },
+  { tool: "regex", label: "Test a regular expression", keywords: "regexp pattern" },
+];
 
 type Phase = "loading" | "signed-out" | "ready";
 type BrowserLink = Link & { kind: string };
@@ -73,6 +90,10 @@ export function StartPage() {
   const [topSites, setTopSites] = useState<BrowserLink[]>([]);
   const [bookmarks, setBookmarks] = useState<BrowserLink[]>([]);
   const [accentPreview, setAccentPreview] = useState("#4f46e5");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [toolboxOpen, setToolboxOpen] = useState(false);
+  const [toolboxTool, setToolboxTool] = useState<string | undefined>(undefined);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -211,6 +232,34 @@ export function StartPage() {
     };
   }, [preferences]);
 
+  const signedOutElsewhere = useCallback(() => void showSignedOut(), [showSignedOut]);
+
+  useEffect(() => {
+    if (phase !== "ready") return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Single letters only act as shortcuts when nothing is being typed and no dialog is open.
+      const target = document.activeElement;
+      const typing = target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      if (typing || document.querySelector('[role="dialog"]')) return;
+
+      if (event.key === "?") setShortcutsOpen(true);
+      else if (event.key === "t") {
+        setToolboxTool(undefined);
+        setToolboxOpen(true);
+      } else if (event.key === "e") setEditing((value) => !value);
+      else if (event.key === "c") setCustomizing((value) => !value);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [phase]);
+
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.editing = String(editing);
@@ -319,6 +368,21 @@ export function StartPage() {
     setPromptVisible(false);
   }
 
+  function openToolbox(tool?: string) {
+    setToolboxTool(tool);
+    setToolboxOpen(true);
+  }
+
+  const paletteActions: PaletteAction[] = [
+    ...TOOL_COMMANDS.map(({ tool, label, keywords }) => ({ label, section: "Toolbox", keywords, icon: WrenchIcon, run: () => openToolbox(tool) })),
+    { label: "Customize this page", section: "Page", shortcut: "c", icon: PaletteIcon, run: () => setCustomizing(true) },
+    { label: editing ? "Finish editing sites" : "Edit sites", section: "Page", shortcut: "e", icon: PencilIcon, run: () => setEditing(!editing) },
+    { label: "Keyboard shortcuts", section: "Page", shortcut: "?", icon: KeyboardIcon, run: () => setShortcutsOpen(true) },
+    { label: "Use the Developer look", section: "Page", keywords: "theme dracula monospace", icon: PaletteIcon, run: () => changePreferences({ ...DEFAULT_PREFERENCES, greetingText: preferences.greetingText, backgroundColor: preferences.backgroundColor, ...LOOKS.Developer }) },
+    ...(user?.isAdmin ? [{ label: "Admin dashboard", section: "Page", icon: ShieldIcon, run: () => { location.href = `${apiBase()}/admin`; } }] : []),
+    { label: "Sign out", section: "Page", icon: LogOutIcon, run: () => void signOut() },
+  ];
+
   if (phase === "loading") {
     return (
       <main className="home-background grid min-h-screen place-items-center">
@@ -370,6 +434,12 @@ export function StartPage() {
                 <ShieldIcon /> Admin
               </Button>
             )}
+            <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)} aria-label="Open the command palette">
+              <CommandIcon /> Commands <kbd className="kbd kbd-xs ml-0.5 text-base-content">⌘K</kbd>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => openToolbox()}>
+              <WrenchIcon /> Toolbox
+            </Button>
             <Button variant="ghost" size="sm" aria-expanded={customizing} onClick={() => setCustomizing(!customizing)}>
               <PaletteIcon /> Customize
             </Button>
@@ -406,6 +476,15 @@ export function StartPage() {
 
             <Groups groups={groups} editing={editing} onChange={changeGroups} />
 
+            {(preferences.showGitHub || preferences.showNews || preferences.showMonitors || preferences.showTodos || preferences.showNotes || preferences.showClocks) && (
+              <section className="home-widgets mt-5" aria-label="Developer panels">
+                {preferences.showClocks && <ClocksCard />}
+                {preferences.showGitHub && <GitHubCard onSignedOut={signedOutElsewhere} />}
+                <WorkspaceCards preferences={preferences} onSignedOut={signedOutElsewhere} />
+                {preferences.showNews && <NewsCard onSignedOut={signedOutElsewhere} />}
+              </section>
+            )}
+
             {editing && (
               <div className="mt-5 flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => changeGroups([...groups, { name: "New group", links: [] }])}>
@@ -436,6 +515,10 @@ export function StartPage() {
           </main>
         </div>
       </div>
+
+      <CommandPalette open={paletteOpen} groups={groups} actions={paletteActions} onOpenChange={setPaletteOpen} />
+      {toolboxOpen && <ToolboxDialog open tool={toolboxTool} onOpenChange={setToolboxOpen} />}
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
 
       {customizing && (
         <CustomizePanel

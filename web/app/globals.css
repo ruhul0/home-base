@@ -180,6 +180,15 @@
   backdrop-filter: none;
   text-shadow: var(--hero-shadow);
 }
+.home-widgets {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+}
+@media (min-width: 720px) {
+  .home-widget-wide { grid-column: 1 / -1; }
+}
+
 /* Only the page's box styles get a tint. "No boxes" keeps its open look and still shows the coloured dot. */
 :root:not([data-card-style="none"]) .home-group[data-coloured] {
   background: color-mix(in oklab, var(--group-color) 16%, color-mix(in oklab, var(--color-base-100) 82%, transparent));

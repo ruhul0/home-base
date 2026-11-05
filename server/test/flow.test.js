@@ -8,6 +8,7 @@ const MAIN = 'http://app:3000';
 const ALLOWLIST = 'http://app-allowlist:3000';
 const ADMIN_EMAIL = 'http://app-admin-email:3000';
 const STORE_LINK = 'http://app-store-link:3000';
+const MONITORS = 'http://app-monitors:3000';
 let base = MAIN;
 
 let failed = 0;
@@ -77,7 +78,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
 };
 
 (async () => {
-  for (const address of [MAIN, ALLOWLIST, ADMIN_EMAIL, STORE_LINK]) await waitForServer(address);
+  for (const address of [MAIN, ALLOWLIST, ADMIN_EMAIL, STORE_LINK, MONITORS]) await waitForServer(address);
   const connection = await mysql.createConnection({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -422,6 +423,60 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall(`/admin/users/${bobRow.id}`, { token: fresh.owner, method: 'DELETE' });
   check('deleting a missing user reported', r.status === 404, r.status);
 
+  const dev = { alice: (await signIn('code-alice')).token, owner: (await signIn('code-owner-renamed')).token };
+  for (const path of ['/dev/github', '/dev/news', '/dev/workspace', '/dev/monitors']) {
+    r = await apiCall(path);
+    check(`${path} needs sign-in`, r.status === 401, r.status);
+  }
+
+  r = await apiCall('/dev/github', { token: dev.alice });
+  check('GitHub panel shows the signed-in user', r.status === 200 && r.data.data.login === 'alice' && r.data.data.publicRepos === 3 && r.data.data.repos[0].name === 'alice/app', JSON.stringify(r.data).slice(0, 300));
+  check('GitHub panel shows open PRs and issues', r.data.data.pullRequests.length === 1 && r.data.data.issues.length === 1 && r.data.data.pullRequests[0].repo === 'alice/app', JSON.stringify(r.data.data.pullRequests));
+  check('GitHub panel drops unsafe links', !JSON.stringify(r.data).includes('javascript:'));
+  check('GitHub panel shows activity', r.data.data.events[0].type === 'PushEvent' && !r.data.data.partial, JSON.stringify(r.data.data.events));
+  r = await apiCall('/dev/github', { token: dev.owner });
+  check("one user's GitHub data isn't shown to another", r.status !== 200 || !JSON.stringify(r.data).includes('alice/app'), JSON.stringify(r.data).slice(0, 200));
+
+  r = await apiCall('/dev/news', { token: dev.alice });
+  check('news loads', r.status === 200 && r.data.stories[0].title === 'A real story' && r.data.stories[0].comments === 7, JSON.stringify(r.data).slice(0, 200));
+  check('news replaces unsafe links with the discussion', r.data.stories[1].url === 'https://news.ycombinator.com/item?id=102', r.data.stories[1]?.url);
+
+  r = await apiCall('/dev/workspace', { token: dev.alice });
+  check('workspace starts empty', JSON.stringify(r.data) === JSON.stringify({ monitors: [], todos: [], notes: '' }), JSON.stringify(r.data));
+  const aliceWorkspace = {
+    monitors: [{ name: 'Up', url: 'http://fake-github:4000/up' }, { name: 'Down', url: 'http://fake-github:4000/down' }],
+    todos: [{ text: 'Ship it', done: false }, { text: 'Done thing', done: true }],
+    notes: 'kubectl get pods\n<script>alert(1)</script>',
+  };
+  r = await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: aliceWorkspace });
+  check('workspace saves', r.status === 200, JSON.stringify(r.data));
+  r = await apiCall('/dev/workspace', { token: dev.alice });
+  check('workspace persists in MySQL', JSON.stringify(r.data) === JSON.stringify(aliceWorkspace), JSON.stringify(r.data));
+  r = await apiCall('/dev/workspace', { token: dev.owner });
+  check("workspaces are private to each user", JSON.stringify(r.data) === JSON.stringify({ monitors: [], todos: [], notes: '' }), JSON.stringify(r.data));
+  for (const [label, body] of [
+    ['script monitor', { monitors: [{ name: 'x', url: 'javascript:alert(1)' }], todos: [], notes: '' }],
+    ['file monitor', { monitors: [{ name: 'x', url: 'file:///etc/passwd' }], todos: [], notes: '' }],
+    ['too many monitors', { monitors: new Array(11).fill({ name: 'x', url: 'https://example.com/' }), todos: [], notes: '' }],
+    ['too many todos', { monitors: [], todos: new Array(101).fill({ text: 'x', done: false }), notes: '' }],
+    ['empty todo', { monitors: [], todos: [{ text: '  ', done: false }], notes: '' }],
+    ['oversized notes', { monitors: [], todos: [], notes: 'x'.repeat(20001) }],
+  ]) {
+    r = await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body });
+    check(`${label} refused`, r.status === 400, r.status);
+  }
+
+  r = await apiCall('/dev/monitors', { token: dev.alice });
+  check('monitors refuse private addresses', r.status === 200 && r.data.results.every((result) => !result.up && result.status === 0 && result.problem.includes('Private')), JSON.stringify(r.data));
+
+  base = MONITORS;
+  r = await apiCall('/dev/monitors', { token: dev.alice });
+  const monitorUp = r.data.results?.find((result) => result.name === 'Up');
+  const monitorDown = r.data.results?.find((result) => result.name === 'Down');
+  check('monitors report a working site', monitorUp?.up === true && monitorUp.status === 200 && monitorUp.ms >= 0, JSON.stringify(monitorUp));
+  check('monitors report a failing site', monitorDown?.up === false && monitorDown.status === 500 && monitorDown.problem === 'Returned HTTP 500.', JSON.stringify(monitorDown));
+  base = MAIN;
+
   let limited = false;
   for (let i = 0; i < 31; i += 1) {
     const res = await fetch(`${base}/auth/github/start?challenge=${makeProof().challenge}`, { redirect: 'manual', headers: { 'x-real-ip': 'flood' } });
@@ -431,7 +486,7 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
 
   r = await fetch(`${base}/`);
   const page = await r.text();
-  check('landing page served at the root', page.includes('Start every day from your own page') && page.includes('/newtab?signin=1'));
+  check('landing page served at the root', page.includes('The start page built for developers') && page.includes('/newtab?signin=1'));
   check('security policy keeps scripts to site files', !/script-src[^;]*unsafe/.test(r.headers.get('content-security-policy')) && r.headers.get('content-security-policy').includes("script-src 'self'"), r.headers.get('content-security-policy'));
   const inlineScripts = (page.match(/<script[^>]*>/g) || []).filter((tag) => !tag.includes('src='));
   check('no inline scripts for the security policy to block', inlineScripts.length === 0, inlineScripts.join(' '));

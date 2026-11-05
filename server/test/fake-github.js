@@ -37,6 +37,30 @@ http.createServer((req, res) => {
     return;
   }
 
+  const respond = (value) => res.end(JSON.stringify(value));
+  const url = new URL(req.url, 'http://fake');
+
+  if (url.pathname === '/up') return respond({ ok: true });
+  if (url.pathname === '/down') {
+    res.statusCode = 500;
+    return respond({});
+  }
+
+  if (url.pathname === '/v0/topstories.json') return respond([101, 102]);
+  if (url.pathname === '/v0/item/101.json') return respond({ title: 'A real story', url: 'https://example.com/story', score: 42, descendants: 7 });
+  if (url.pathname === '/v0/item/102.json') return respond({ title: 'A bad link', url: 'javascript:alert(1)', score: 1, descendants: 0 });
+
+  const issue = (kind) => ({ title: `Alice's open ${kind}`, html_url: `https://github.com/alice/app/${kind}/1`, number: 1, updated_at: '2026-11-01T00:00:00Z', repository_url: 'https://api.github.com/repos/alice/app' });
+  if (url.pathname === '/search/issues') {
+    const query = url.searchParams.get('q') ?? '';
+    if (!query.includes('author:alice')) return respond({ items: [] });
+    if (query.includes('is:pr')) return respond({ items: [issue('pull'), { ...issue('pull'), title: 'Bad link', html_url: 'javascript:alert(1)' }] });
+    return respond({ items: [issue('issues')] });
+  }
+  if (url.pathname === '/users/alice') return respond({ name: 'Alice', public_repos: 3, followers: 5, following: 2 });
+  if (url.pathname === '/users/alice/repos') return respond([{ full_name: 'alice/app', html_url: 'https://github.com/alice/app', description: 'An app', language: 'Go', stargazers_count: 9, pushed_at: '2026-11-01T00:00:00Z' }]);
+  if (url.pathname === '/users/alice/events/public') return respond([{ type: 'PushEvent', repo: { name: 'alice/app' }, created_at: '2026-11-01T00:00:00Z' }]);
+
   res.statusCode = 404;
   res.end('{}');
 }).listen(4000);

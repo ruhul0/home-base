@@ -12,8 +12,14 @@ export default function PrivacyPage() {
       <ul>
         <li>Your GitHub user ID and username, which identify your account.</li>
         <li>The groups and sites you save, your design choices and any background or icon images you upload, so they appear on your devices.</li>
+        <li>Your todos, scratchpad and the addresses you choose to monitor.</li>
         <li>A protected record of each signed-in session, kept for up to a year or until you sign out.</li>
       </ul>
+
+      <h2>What our server requests for you</h2>
+      <p>
+        To show the developer panels, our server requests your public profile, repositories, issues, pull requests and activity from GitHub, top stories from Hacker News, and any addresses you add as monitors. Those sites see the request as coming from our server, not from you. Your account&apos;s GitHub password and private repositories are never involved. Text in the dev toolbox stays in your browser and is never sent to our server.
+      </p>
 
       <h2>What GitHub shares</h2>
       <p>

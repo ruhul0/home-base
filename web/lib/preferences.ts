@@ -31,6 +31,12 @@ export const DEFAULT_PREFERENCES: Preferences = {
   showGroupTitles: true,
   showMostVisited: true,
   showBookmarks: true,
+  showGitHub: true,
+  showNews: true,
+  showMonitors: true,
+  showTodos: true,
+  showNotes: true,
+  showClocks: true,
 };
 
 export const DAISY_THEMES = [
@@ -61,6 +67,7 @@ function systemTheme() {
 
 export const LOOKS: Record<string, Partial<Preferences>> = {
   Default: {},
+  Developer: { theme: "dracula", font: "mono", cardStyle: "solid", corners: "soft", iconShape: "square", tileSize: "small", clockSize: "small", pageWidth: "wide", showGreeting: false },
   Minimal: { theme: "lofi", cardStyle: "none", layout: "compact", showGreeting: false, showDate: false, showGroupTitles: false, clockSize: "small" },
   Focus: { theme: "night", pageWidth: "narrow", layout: "list", clockSize: "large", pattern: "grid" },
   Cosy: { theme: "coffee", font: "serif", cardStyle: "solid", corners: "soft", iconShape: "circle" },

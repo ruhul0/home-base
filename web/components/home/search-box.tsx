@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { matchBang } from "@/lib/bangs";
 import { isExtension } from "@/lib/browser";
 import { fallbackSearchUrl, looksLikeAddress, normalizeUrl, searchUrl } from "@/lib/links";
 import type { Group, Link, Preferences } from "@/lib/types";
@@ -26,6 +27,9 @@ function findResults(text: string, groups: Group[], browserLinks: Result[]): Res
   }).slice(0, MAX_RESULTS - 1);
 
   const trimmed = text.trim();
+  const bang = matchBang(trimmed);
+  if (bang) return [{ name: bang.name, url: bang.url, kind: bang.kind }, ...matches];
+
   const address = looksLikeAddress(trimmed) ? normalizeUrl(trimmed) : null;
   if (address) return [{ name: `Go to ${trimmed}`, url: address, kind: "Address" }, ...matches];
   // Site matches come first, so typing "you" and pressing Enter opens YouTube.
@@ -104,7 +108,7 @@ export function SearchBox({
         onKeyDown={onKeyDown}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
-        placeholder="Search, or type a site name or address"
+        placeholder="Search, or try: gh vercel/next.js · npm zod · mdn fetch"
         aria-label="Search the web, your sites and bookmarks"
         autoComplete="off"
         spellCheck={false}
