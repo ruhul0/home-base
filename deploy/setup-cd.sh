@@ -20,26 +20,33 @@ trap 'rm -rf "$key_dir"' EXIT
 ssh-keygen -q -t ed25519 -N '' -C "$KEY_COMMENT" -f "$key_dir/key"
 public_key="$(cat "$key_dir/key.pub")"
 
-ssh "$SERVER_ALIAS" bash -s -- "$public_key" "$REPO" "$KEY_COMMENT" <<'REMOTE'
+# ssh joins its arguments into one remote command, so each value needs its own quotes.
+ssh "$SERVER_ALIAS" "bash -s -- '$public_key' '$REPO' '$KEY_COMMENT'" <<'REMOTE'
 set -euo pipefail
 public_key="$1"; repo="$2"; comment="$3"
 umask 077
 
-if grep -q "$comment" ~/.ssh/authorized_keys; then
-  echo "A deploy key is already installed, so nothing was changed." >&2
-  exit 1
-fi
-cp ~/.ssh/authorized_keys ~/.ssh/authorized_keys.bak."$(date +%F-%H%M)"
-install -m 700 ~/chrome-home/deploy/server-deploy.sh ~/chrome-home-deploy.sh
-printf 'restrict,command="%s/chrome-home-deploy.sh" %s\n' "$HOME" "$public_key" >> ~/.ssh/authorized_keys
-
 cd ~/chrome-home
 if [ ! -d .git ]; then
   git init -q -b main
+fi
+if git remote get-url origin >/dev/null 2>&1; then
+  git remote set-url origin "https://github.com/$repo.git"
+else
   git remote add origin "https://github.com/$repo.git"
 fi
 git fetch -q origin main
 git reset -q --mixed origin/main
+install -m 700 deploy/server-deploy.sh ~/chrome-home-deploy.sh
+
+# Safe to run again: any earlier deploy key is replaced, along with the
+# incomplete line an earlier version of this script could leave behind.
+keys=~/.ssh/authorized_keys
+command_option="restrict,command=\"$HOME/chrome-home-deploy.sh\""
+cp "$keys" "$keys.bak.$(date +%F-%H%M%S)"
+grep -vF -e "$comment" -e "$command_option" "$keys" > "$keys.new" || true
+printf '%s %s\n' "$command_option" "$public_key" >> "$keys.new"
+mv "$keys.new" "$keys"
 echo "Server is ready."
 REMOTE
 
