@@ -56,6 +56,10 @@ cd web && npm run build && npm run build:extension
 
 If a CDN sits in front of the site, make sure it doesn't cache `/api/` responses. They must never be shared between users.
 
+## Backups
+
+The `backup` service encrypts the database and `.env` with [age](https://github.com/FiloSottile/age) and uploads them to Cloudflare R2 daily, using `deploy/set-r2-backup.sh`. The private key is never on the server. See `deploy/restore-backup.md` to restore, and `deploy/test-backup.sh` for a tested full cycle.
+
 ## Security
 
 - GitHub App tokens are encrypted with AES-256-GCM and bound to each user. The key lives in the server's `.env`, so this protects database dumps and backups but not a full server compromise.

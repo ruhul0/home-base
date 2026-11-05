@@ -84,13 +84,45 @@ func (s *Store) listServers(ctx context.Context) ([]MonitoredServer, error) {
 	return servers, rows.Err()
 }
 
+// BackupStatus says how the off-site backups are doing, for the admin panel.
+type BackupStatus struct {
+	LastSuccessAt *time.Time `json:"lastSuccessAt"`
+	LastAttemptAt time.Time  `json:"lastAttemptAt"`
+	LastError     string     `json:"lastError"`
+	LastBytes     int64      `json:"lastBytes"`
+}
+
+// getBackupStatus returns nil until the first backup has run.
+func (s *Store) getBackupStatus(ctx context.Context) (*BackupStatus, error) {
+	var status BackupStatus
+	var success sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		"SELECT last_success_at, last_attempt_at, last_error, last_bytes FROM backup_status WHERE id = 1").
+		Scan(&success, &status.LastAttemptAt, &status.LastError, &status.LastBytes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if success.Valid {
+		status.LastSuccessAt = &success.Time
+	}
+	return &status, nil
+}
+
 func (a *App) handleAdminServers(w http.ResponseWriter, r *http.Request, _ session) {
 	servers, err := a.store.listServers(r.Context())
 	if err != nil {
 		writeServerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"servers": servers, "serverTime": time.Now().UTC()})
+	backup, err := a.store.getBackupStatus(r.Context())
+	if err != nil {
+		writeServerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"servers": servers, "serverTime": time.Now().UTC(), "backup": backup})
 }
 
 // handleAdminAddServer shows the agent's token once. Only its hash is stored.

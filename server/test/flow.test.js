@@ -545,6 +545,12 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall('/groups', { token: removable });
   check('one session can be removed', r.status === 401, r.status);
 
+  r = await apiCall('/admin/servers', { token: dev.owner });
+  check('backup status starts empty', r.status === 200 && r.data.backup === null, JSON.stringify(r.data.backup));
+  await connection.query("INSERT INTO backup_status (id, last_success_at, last_attempt_at, last_error, last_bytes) VALUES (1, UTC_TIMESTAMP(), UTC_TIMESTAMP(), 'The upload to R2 failed.', 1234)");
+  r = await apiCall('/admin/servers', { token: dev.owner });
+  check('admins see backup status', r.data.backup?.lastError === 'The upload to R2 failed.' && r.data.backup.lastBytes === 1234 && Boolean(r.data.backup.lastSuccessAt), JSON.stringify(r.data.backup));
+
   r = await apiCall('/admin/servers', { token: dev.alice });
   check('the server panel is admin only', r.status === 403, r.status);
   r = await apiCall('/admin/servers', { token: dev.owner, method: 'POST', body: { name: 'prod-1' } });

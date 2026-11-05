@@ -38,6 +38,9 @@ docker compose up -d --build app
 
 if wait_until_healthy; then
   docker image prune -f --filter "label=com.docker.compose.project=chrome-home" >/dev/null
+  # Build cache grows with every deploy, so anything unused for a week goes. This only affects the
+  # default builder, and a slower next build is the worst that can happen.
+  docker builder prune -f --filter until=168h >/dev/null 2>&1 || true
   echo "Deployed ${next:0:7} and it's healthy."
   exit 0
 fi

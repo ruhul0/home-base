@@ -130,6 +130,13 @@ export interface ServerReport {
   unhealthy: string[];
 }
 
+export interface BackupStatus {
+  lastSuccessAt: string | null;
+  lastAttemptAt: string;
+  lastError: string;
+  lastBytes: number;
+}
+
 export interface MonitoredServer {
   id: number;
   name: string;

@@ -58,6 +58,33 @@ services:
       start_period: 30s
     mem_limit: 512m
 
+  # Encrypted daily backups to Cloudflare R2. It stays idle until deploy/set-r2-backup.sh configures it.
+  backup:
+    build: deploy/backup
+    restart: unless-stopped
+    user: "${BACKUP_UID:-1000}"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_ENV_FILE: /run/home-base/.env
+    # The folder is mounted rather than the file, because setup scripts replace .env when saving.
+    volumes:
+      - ./:/run/home-base:ro
+    networks:
+      - web
+      - database
+    mem_limit: 256m
+
 networks:
   web:
   database:

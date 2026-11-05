@@ -7,17 +7,40 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, SignedOutError } from "@/lib/api";
 import { SERVER_URL } from "@/lib/browser";
-import type { MonitoredServer } from "@/lib/types";
+import type { BackupStatus, MonitoredServer } from "@/lib/types";
 import { DevCard, DevMessage, timeAgo } from "./dev-card";
 
 const REFRESH_MS = 60 * 1000;
 const OFFLINE_AFTER_MS = 5 * 60 * 1000;
+const BACKUP_OVERDUE_MS = 36 * 60 * 60 * 1000;
 const AGENT_URL = "https://raw.githubusercontent.com/ruhul0/home-base/main/deploy/server-agent.sh";
 
 function formatUptime(seconds: number) {
   const days = Math.floor(seconds / 86400);
   if (days > 0) return `${days}d`;
   return `${Math.floor(seconds / 3600)}h`;
+}
+
+function BackupLine({ backup, now }: { backup: BackupStatus | null; now: number }) {
+  if (!backup) {
+    return (
+      <p className="flex items-center gap-2 text-sm">
+        <span className="status status-warning flex-none" aria-hidden />
+        Off-site backups aren&apos;t running yet.
+      </p>
+    );
+  }
+  const lastSuccess = backup.lastSuccessAt ? new Date(backup.lastSuccessAt).getTime() : 0;
+  const healthy = !backup.lastError && lastSuccess > 0 && now - lastSuccess < BACKUP_OVERDUE_MS;
+  const megabytes = (backup.lastBytes / (1024 * 1024)).toFixed(backup.lastBytes < 1024 * 1024 ? 2 : 1);
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 text-sm">
+      <span className={`status flex-none ${healthy ? "status-success" : "status-error"}`} aria-hidden />
+      Off-site backup: {backup.lastSuccessAt ? `last succeeded ${timeAgo(backup.lastSuccessAt)}, ${megabytes} MB` : "has never succeeded"}.
+      {backup.lastError && <span className="text-error">{backup.lastError}</span>}
+      {!backup.lastError && !healthy && <span className="text-error">It&apos;s overdue, so check the backup container.</span>}
+    </p>
+  );
 }
 
 function Meter({ label, value }: { label: string; value: number }) {
@@ -35,6 +58,7 @@ function Meter({ label, value }: { label: string; value: number }) {
 
 export function ServersCard({ onSignedOut }: { onSignedOut: () => void }) {
   const [servers, setServers] = useState<MonitoredServer[] | null>(null);
+  const [backup, setBackup] = useState<BackupStatus | null>(null);
   const [serverTime, setServerTime] = useState(0);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
@@ -54,6 +78,7 @@ export function ServersCard({ onSignedOut }: { onSignedOut: () => void }) {
     try {
       const result = await api.admin.servers();
       setServers(result.servers);
+      setBackup(result.backup);
       setServerTime(new Date(result.serverTime).getTime());
     } catch (error) {
       reportError(error, "Server health couldn't be loaded.");
@@ -111,6 +136,7 @@ export function ServersCard({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <DevCard title="Servers" icon={ServerIcon} className="home-widget-wide" loading={loading} onRefresh={() => void load()}>
       <div className="grid gap-3">
+        {servers && <BackupLine backup={backup} now={serverTime} />}
         {servers?.length === 0 && !install && <DevMessage>Add a server below, then run the install command on it. It reports disk, memory, load and container status once a minute. Only you can see this panel.</DevMessage>}
 
         {servers && servers.length > 0 && (

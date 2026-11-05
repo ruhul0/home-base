@@ -47,6 +47,9 @@ jobs:
       - name: Test the deploy script and its rollback
         run: bash deploy/test-deploy.sh
 
+      - name: Test a full backup and restore
+        run: bash deploy/test-backup.sh
+
       - name: Build the extension package
         working-directory: web
         run: |

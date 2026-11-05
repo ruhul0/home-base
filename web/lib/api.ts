@@ -2,6 +2,7 @@ import { apiBase, KEYS, storage } from "./browser";
 import type {
   AdminTotals,
   AdminUser,
+  BackupStatus,
   GitHubResponse,
   Group,
   GroupsResponse,
@@ -93,7 +94,7 @@ export const api = {
   },
   deleteAccount: (confirm: string) => request("/api/account", "DELETE", { confirm }),
   admin: {
-    servers: () => request<{ servers: MonitoredServer[]; serverTime: string }>("/api/admin/servers"),
+    servers: () => request<{ servers: MonitoredServer[]; serverTime: string; backup: BackupStatus | null }>("/api/admin/servers"),
     addServer: (name: string) => request<{ id: number; token: string }>("/api/admin/servers", "POST", { name }),
     deleteServer: (id: number) => request(`/api/admin/servers/${id}`, "DELETE"),
     overview: () =>

@@ -72,6 +72,13 @@ var schema = []string{
 	   reported_at DATETIME NULL,
 	   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	 ) CHARACTER SET utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS backup_status (
+	   id INT PRIMARY KEY,
+	   last_success_at DATETIME NULL,
+	   last_attempt_at DATETIME NOT NULL,
+	   last_error VARCHAR(200) NOT NULL DEFAULT '',
+	   last_bytes BIGINT NOT NULL DEFAULT 0
+	 )`,
 	`CREATE TABLE IF NOT EXISTS sessions (
 	   token_hash CHAR(64) PRIMARY KEY,
 	   user_id INT NOT NULL,

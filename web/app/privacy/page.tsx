@@ -44,12 +44,12 @@ export default function PrivacyPage() {
 
       <h2>How your data is used</h2>
       <p>
-        Your data is only used to run Home Base. It isn&apos;t sold, shared for advertising or used to track you across websites. Your data is stored on a private server, and Cloudflare carries traffic to and from it.
+        Your data is only used to run Home Base. It isn&apos;t sold, shared for advertising or used to track you across websites. Your data is stored on a private server, and Cloudflare carries traffic to and from it. Backups are encrypted before leaving the server and kept in Cloudflare R2, where neither Cloudflare nor the server can read them.
       </p>
 
       <h2>Removing your data</h2>
       <p>
-        You can edit or remove your saved sites at any time. You can sign out other devices or permanently delete your account yourself, under Customize and then Account. This deletes everything listed above, except that database backups are kept for a limited time before being replaced.
+        You can edit or remove your saved sites at any time. You can sign out other devices or permanently delete your account yourself, under Customize and then Account. This deletes everything listed above, except that encrypted backups taken earlier are kept for up to 30 days before being removed.
       </p>
     </main>
   );

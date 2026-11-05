@@ -1,0 +1,57 @@
+# A throwaway database and fake R2 for deploy/test-backup.sh.
+name: chrome-home-backup-test
+
+x-database: &database
+  image: mysql:8.4
+  environment:
+    MYSQL_ROOT_PASSWORD: throwaway-root
+    MYSQL_DATABASE: test
+    MYSQL_USER: test
+    MYSQL_PASSWORD: throwaway
+  command:
+    - --innodb-buffer-pool-size=64M
+    - --performance-schema=OFF
+  tmpfs:
+    - /var/lib/mysql
+  healthcheck:
+    test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -pthrowaway-root --silent"]
+    interval: 3s
+    timeout: 3s
+    retries: 30
+    start_period: 10s
+
+services:
+  db: *database
+  restored-db: *database
+
+  fake-r2:
+    image: node:22-alpine
+    working_dir: /data
+    command: ["node", "-e", "${FAKE_R2_SCRIPT}"]
+    volumes:
+      - r2-data:/data
+
+  backup:
+    build: ../../deploy/backup
+    user: "1001"
+    environment:
+      DB_HOST: db
+      DB_NAME: test
+      DB_USER: test
+      DB_PASSWORD: throwaway
+      R2_ACCOUNT_ID: test-account
+      R2_BUCKET: test-bucket
+      R2_ACCESS_KEY_ID: test-key-id
+      R2_SECRET_ACCESS_KEY: test-secret-key
+      R2_ENDPOINT: ${R2_ENDPOINT:-http://fake-r2:9000}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_ENV_FILE: /run/test.env
+    volumes:
+      - ./backup-test.env:/run/test.env:ro
+      - r2-data:/r2:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  r2-data:
