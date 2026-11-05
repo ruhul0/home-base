@@ -159,6 +159,55 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   r = await apiCall('/groups', { token: owner.token });
   check("bob's reset leaves owner alone", r.data.groups[0].name === 'Business');
 
+  const iconImage = (bytes, type = 'image/png') => `image:data:${type};base64,${Buffer.from(bytes).toString('base64')}`;
+  const smallPng = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 1, 2, 3, 4];
+  const customSites = [
+    {
+      name: 'Colourful',
+      color: '#ff8800',
+      links: [
+        { name: 'Emoji', url: 'https://example.com/a', icon: 'emoji:🎵', iconColor: '#112233' },
+        { name: 'Symbol', url: 'https://example.com/b', icon: 'lucide:music' },
+        { name: 'Picture', url: 'https://example.com/c', icon: iconImage(smallPng), iconColor: '#aabbcc' },
+        { name: 'Plain', url: 'https://example.com/d' },
+      ],
+    },
+    { name: 'No colour', links: [] },
+  ];
+  r = await apiCall('/groups', { token: bob.token, method: 'PUT', body: { groups: customSites } });
+  check('custom icons and group colours save', r.status === 200, JSON.stringify(r.data));
+  r = await apiCall('/groups', { token: bob.token });
+  check('custom icons and group colours persist in MySQL', JSON.stringify(r.data.groups) === JSON.stringify(customSites), JSON.stringify(r.data.groups).slice(0, 300));
+  r = await apiCall('/groups', { token: aliceToken });
+  check("bob's icons don't reach alice", !JSON.stringify(r.data.groups).includes('Colourful'));
+
+  const withLink = (extra) => ({ groups: [{ name: 'Bad', links: [{ name: 'x', url: 'https://example.com/', ...extra }] }] });
+  for (const [label, body] of [
+    ['script as icon', withLink({ icon: 'javascript:alert(1)' })],
+    ['remote image as icon', withLink({ icon: 'https://evil.example/track.png' })],
+    ['SVG icon', withLink({ icon: iconImage(Buffer.from('<svg onload="alert(1)"/>xxxx'), 'image/svg+xml') })],
+    ['text pretending to be an image', withLink({ icon: iconImage(Buffer.from('<script>alert(1)</script>')) })],
+    ['image with the wrong declared type', withLink({ icon: iconImage(smallPng, 'image/jpeg') })],
+    ['broken image data', withLink({ icon: 'image:data:image/png;base64,@@@@' })],
+    ['oversized icon image', withLink({ icon: iconImage([...smallPng, ...new Array(20000).fill(0)]) })],
+    ['symbol name with code', withLink({ icon: 'lucide:<img src=x>' })],
+    ['long emoji text', withLink({ icon: `emoji:${'x'.repeat(9)}` })],
+    ['empty emoji', withLink({ icon: 'emoji:' })],
+    ['icon colour with code', withLink({ iconColor: 'red;background:url(x)' })],
+    ['group colour with code', { groups: [{ name: 'Bad', color: 'url(javascript:alert(1))', links: [] }] }],
+  ]) {
+    r = await apiCall('/groups', { token: bob.token, method: 'PUT', body });
+    check(`${label} refused`, r.status === 400, r.status);
+  }
+  r = await apiCall('/groups', { token: bob.token });
+  check('refused icons changed nothing', JSON.stringify(r.data.groups) === JSON.stringify(customSites));
+
+  const legalIcon = iconImage([...smallPng, ...new Array(11000).fill(0)]);
+  const manyIcons = { groups: [{ name: 'Many', links: new Array(50).fill(0).map((_, index) => ({ name: `Site ${index}`, url: `https://example.com/${index}`, icon: legalIcon })) }] };
+  r = await apiCall('/groups', { token: bob.token, method: 'PUT', body: manyIcons });
+  check('too many image icons at once refused clearly', r.status === 413, r.status);
+  r = await apiCall('/groups/reset', { token: bob.token, method: 'POST' });
+
   r = await apiCall('/groups', { token: bob.token, method: 'PUT', body: { groups: [{ name: 'Bad', links: [{ name: 'x', url: 'javascript:alert(1)' }] }] } });
   check('script link refused', r.status === 400, r.status);
   r = await apiCall('/groups');

@@ -1,20 +1,21 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ArrowLeftIcon, ArrowRightIcon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, PaletteIcon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { addLink, moveGroup, moveLink, removeLink, updateLink } from "@/lib/links";
 import type { Group, Link } from "@/lib/types";
+import { GroupColourDialog } from "./group-colour-dialog";
 import { LinkDialog, type LinkDialogTarget } from "./link-dialog";
 import { SiteIcon } from "./site-icon";
 
 type DragItem = { type: "link"; groupIndex: number; linkIndex: number } | { type: "group"; groupIndex: number };
 
-export function SiteLink({ link }: { link: Link }) {
+export function SiteLink({ link, groupColor }: { link: Link; groupColor?: string }) {
   return (
     <a className="home-link" href={link.url} title={`${link.name}\n${link.url}`} aria-label={link.name}>
-      <SiteIcon link={link} />
+      <SiteIcon link={link} groupColor={groupColor} />
       <span className="home-link-name">{link.name}</span>
     </a>
   );
@@ -30,6 +31,7 @@ export function Groups({
   onChange: (groups: Group[]) => void;
 }) {
   const [dialog, setDialog] = useState<LinkDialogTarget | null>(null);
+  const [colourGroup, setColourGroup] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const dragItem = useRef<DragItem | null>(null);
 
@@ -102,6 +104,8 @@ export function Groups({
             <div
               key={`${groupIndex}-${group.name}`}
               className={`home-group ${dropTarget === `group-${groupIndex}` ? "home-drop-target" : ""}`}
+              data-coloured={group.color ? true : undefined}
+              style={group.color ? ({ "--group-color": group.color } as React.CSSProperties) : undefined}
               {...(editing ? groupDrop : {})}
             >
               {editing ? (
@@ -113,6 +117,9 @@ export function Groups({
                     onBlur={(event) => renameGroup(groupIndex, event.target.value)}
                     className="min-w-0 flex-1 bg-base-100 text-base-content"
                   />
+                  <Button variant="outline" size="icon-sm" className="bg-base-100 text-base-content" aria-label={`Choose a colour for ${group.name}`} onClick={() => setColourGroup(groupIndex)}>
+                    <PaletteIcon />
+                  </Button>
                   <Button variant="outline" size="icon-sm" className="bg-base-100 text-base-content" aria-label={`Move ${group.name} earlier`} disabled={groupIndex === 0} onClick={() => onChange(moveGroup(groups, groupIndex, groupIndex - 1))}>
                     <ArrowLeftIcon />
                   </Button>
@@ -127,7 +134,10 @@ export function Groups({
                   )}
                 </div>
               ) : (
-                <h2 className="home-group-title mb-3 px-1 text-sm font-semibold">{group.name}</h2>
+                <h2 className="home-group-title mb-3 flex items-center gap-2 px-1 text-sm font-semibold">
+                  {group.color && <span className="size-2.5 flex-none rounded-full" style={{ background: group.color }} aria-hidden />}
+                  {group.name}
+                </h2>
               )}
 
               <div className="home-links">
@@ -142,7 +152,7 @@ export function Groups({
                       className={`relative min-w-0 rounded-2xl ${dropTarget === id ? "home-drop-target" : ""}`}
                       {...(editing ? { ...dragHandlers({ type: "link", groupIndex, linkIndex }), ...linkDrop } : {})}
                     >
-                      <SiteLink link={link} />
+                      <SiteLink link={link} groupColor={group.color} />
                       {editing && (
                         <>
                           <button
@@ -185,6 +195,20 @@ export function Groups({
           groups={groups}
           onClose={() => setDialog(null)}
           onSave={saveDialog}
+        />
+      )}
+
+      {colourGroup !== null && groups[colourGroup] && (
+        <GroupColourDialog
+          groupName={groups[colourGroup].name}
+          colour={groups[colourGroup].color ?? ""}
+          onClose={() => setColourGroup(null)}
+          onSave={(colour) => {
+            onChange(
+              groups.map((group, position) => (position === colourGroup ? { ...group, color: colour || undefined } : group)),
+            );
+            setColourGroup(null);
+          }}
         />
       )}
     </>

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon, PaletteIcon, PencilIcon, PlusIcon, RotateCcwIcon, ShieldIcon, LogOutIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { api, clearLocalSession, setToken, SignedOutError } from "@/lib/api";
+import { api, ApiError, clearLocalSession, setToken, SignedOutError } from "@/lib/api";
 import { apiBase, isExtension, KEYS, storage } from "@/lib/browser";
 import { LOGIN_ERRORS, resumeWebLogin, startLogin, trySilentExtensionLogin } from "@/lib/login";
 import {
@@ -225,7 +225,8 @@ export function StartPage() {
         await api.putGroups(next);
         await storage.set(KEYS.groups, next);
       } catch (error) {
-        handleApiError(error, "Your last change wasn't saved. Reload the page and try again.");
+        const tooLarge = error instanceof ApiError && error.status === 413;
+        handleApiError(error, tooLarge ? "That's too many image icons to save. Remove a few or use emoji or symbols instead." : "Your last change wasn't saved. Reload the page and try again.");
       }
     });
   }

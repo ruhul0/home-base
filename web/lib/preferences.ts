@@ -69,7 +69,7 @@ export const LOOKS: Record<string, Partial<Preferences>> = {
   Soft: { theme: "pastel", font: "rounded", corners: "round", iconShape: "circle", pattern: "dots" },
 };
 
-function relativeLuminance(hex: string) {
+export function relativeLuminance(hex: string) {
   const channel = (start: number) => {
     const value = parseInt(hex.slice(start, start + 2), 16) / 255;
     return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;

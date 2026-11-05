@@ -11,7 +11,7 @@ export default function PrivacyPage() {
       <h2>What is stored on our server</h2>
       <ul>
         <li>Your GitHub user ID and username, which identify your account.</li>
-        <li>The groups and sites you save, your design choices and any background image you upload, so they appear on your devices.</li>
+        <li>The groups and sites you save, your design choices and any background or icon images you upload, so they appear on your devices.</li>
         <li>A protected record of each signed-in session, kept for up to a year or until you sign out.</li>
       </ul>
 

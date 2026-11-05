@@ -41,6 +41,39 @@ export function fallbackSearchUrl(query: string): string {
   return `${SEARCH_URLS.google}${encodeURIComponent(query)}`;
 }
 
+export const COLOUR_PALETTE = [
+  "#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e", "#14b8a6",
+  "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#ec4899", "#64748b",
+];
+
+const MAX_ICON_LENGTH = 16 * 1024;
+const ICON_SIZES = [96, 64, 48];
+const ICON_QUALITIES = [0.85, 0.65];
+const ICON_FORMATS = ["image/webp", "image/jpeg"];
+
+/** Crops a picture to a square and shrinks it until it fits the small size allowed for link icons. */
+export async function compressIcon(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const side = Math.min(bitmap.width, bitmap.height);
+  const left = (bitmap.width - side) / 2;
+  const top = (bitmap.height - side) / 2;
+
+  for (const size of ICON_SIZES) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    canvas.getContext("2d")?.drawImage(bitmap, left, top, side, side, 0, 0, size, size);
+    for (const format of ICON_FORMATS) {
+      for (const quality of ICON_QUALITIES) {
+        const url = canvas.toDataURL(format, quality);
+        const icon = `image:${url}`;
+        if (url.startsWith(`data:${format};`) && icon.length <= MAX_ICON_LENGTH) return icon;
+      }
+    }
+  }
+  throw new Error("That image is too large, even after shrinking it.");
+}
+
 function clone(groups: Group[]): Group[] {
   return groups.map((group) => ({ ...group, links: [...group.links] }));
 }

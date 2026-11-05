@@ -1,10 +1,14 @@
 export interface Link {
   name: string;
   url: string;
+  /** Empty for automatic. Otherwise "emoji:…", "lucide:…" or "image:data:…". */
+  icon?: string;
+  iconColor?: string;
 }
 
 export interface Group {
   name: string;
+  color?: string;
   links: Link[];
 }
 

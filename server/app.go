@@ -40,6 +40,8 @@ const (
 	contentSecurity = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 )
 
+const maxGroupsBody = 480 * 1024
+
 var (
 	challengePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 	bearerPattern    = regexp.MustCompile(`^Bearer ([0-9a-f]{64})$`)
@@ -302,7 +304,11 @@ func writeOK(w http.ResponseWriter) {
 
 // readJSON reports a problem to the client and returns false if the body can't be used.
 func readJSON(w http.ResponseWriter, r *http.Request, target any, invalidMessage string) bool {
-	body := http.MaxBytesReader(w, r.Body, maxJSONBody)
+	return readJSONWithin(w, r, target, invalidMessage, maxJSONBody)
+}
+
+func readJSONWithin(w http.ResponseWriter, r *http.Request, target any, invalidMessage string, limit int64) bool {
+	body := http.MaxBytesReader(w, r.Body, limit)
 	if err := json.NewDecoder(body).Decode(target); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
@@ -581,7 +587,8 @@ func (a *App) handlePutGroups(w http.ResponseWriter, r *http.Request, current se
 	var body struct {
 		Groups []Group `json:"groups"`
 	}
-	if !readJSON(w, r, &body, invalid) {
+	// Custom icons travel with the sites. This limit stays under nginx's 512 KB request limit.
+	if !readJSONWithin(w, r, &body, invalid, maxGroupsBody) {
 		return
 	}
 	groups, ok := cleanGroups(body.Groups)

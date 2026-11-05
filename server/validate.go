@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"net/url"
 	"regexp"
 	"slices"
@@ -137,6 +138,52 @@ func cleanURL(value string) (string, bool) {
 	return parsed.String(), true
 }
 
+const (
+	iconEmojiPrefix  = "emoji:"
+	iconSymbolPrefix = "lucide:"
+	iconImagePrefix  = "image:data:"
+	maxIconEmoji     = 8
+	maxIconImage     = 16 * 1024
+)
+
+var iconSymbol = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
+
+// cleanIcon accepts an empty value, a short emoji, the name of a built-in symbol, or a small photo.
+// Images are checked by their real contents, and SVG is refused because it can contain scripts.
+func cleanIcon(icon string) bool {
+	switch {
+	case icon == "":
+		return true
+	case strings.HasPrefix(icon, iconEmojiPrefix):
+		count := utf8.RuneCountInString(strings.TrimPrefix(icon, iconEmojiPrefix))
+		return count >= 1 && count <= maxIconEmoji
+	case strings.HasPrefix(icon, iconSymbolPrefix):
+		return iconSymbol.MatchString(strings.TrimPrefix(icon, iconSymbolPrefix))
+	case strings.HasPrefix(icon, iconImagePrefix):
+		return cleanIconImage(strings.TrimPrefix(icon, iconImagePrefix), len(icon))
+	}
+	return false
+}
+
+func cleanIconImage(dataURL string, totalLength int) bool {
+	if totalLength > maxIconImage {
+		return false
+	}
+	declaredType, encoded, found := strings.Cut(dataURL, ";base64,")
+	if !found {
+		return false
+	}
+	image, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return false
+	}
+	return detectImageType(image) == declaredType
+}
+
+func cleanOptionalColour(colour string) bool {
+	return colour == "" || hexColour.MatchString(colour)
+}
+
 func cleanGroups(input []Group) ([]Group, bool) {
 	if input == nil || len(input) > maxGroups {
 		return nil, false
@@ -144,19 +191,19 @@ func cleanGroups(input []Group) ([]Group, bool) {
 	groups := make([]Group, 0, len(input))
 	for _, group := range input {
 		name, ok := cleanName(group.Name)
-		if !ok || group.Links == nil || len(group.Links) > maxLinksPerGroup {
+		if !ok || group.Links == nil || len(group.Links) > maxLinksPerGroup || !cleanOptionalColour(group.Color) {
 			return nil, false
 		}
 		links := make([]Link, 0, len(group.Links))
 		for _, link := range group.Links {
 			linkName, nameOK := cleanName(link.Name)
 			address, addressOK := cleanURL(link.URL)
-			if !nameOK || !addressOK {
+			if !nameOK || !addressOK || !cleanIcon(link.Icon) || !cleanOptionalColour(link.IconColor) {
 				return nil, false
 			}
-			links = append(links, Link{Name: linkName, URL: address})
+			links = append(links, Link{Name: linkName, URL: address, Icon: link.Icon, IconColor: link.IconColor})
 		}
-		groups = append(groups, Group{Name: name, Links: links})
+		groups = append(groups, Group{Name: name, Color: group.Color, Links: links})
 	}
 	return groups, true
 }

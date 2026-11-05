@@ -51,6 +51,7 @@ var schema = []string{
 	   id INT AUTO_INCREMENT PRIMARY KEY,
 	   user_id INT NULL,
 	   name VARCHAR(100) NOT NULL,
+	   color VARCHAR(7) NOT NULL DEFAULT '',
 	   position INT NOT NULL,
 	   CONSTRAINT link_groups_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 	 ) CHARACTER SET utf8mb4`,
@@ -59,20 +60,25 @@ var schema = []string{
 	   group_id INT NOT NULL,
 	   name VARCHAR(100) NOT NULL,
 	   url VARCHAR(2048) NOT NULL,
+	   icon TEXT NULL,
+	   icon_color VARCHAR(7) NOT NULL DEFAULT '',
 	   position INT NOT NULL,
 	   CONSTRAINT links_group FOREIGN KEY (group_id) REFERENCES link_groups (id) ON DELETE CASCADE
 	 ) CHARACTER SET utf8mb4`,
 }
 
-// Link is one saved site.
+// Link is one saved site. Icon and IconColor are empty unless the user customized them.
 type Link struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Icon      string `json:"icon,omitempty"`
+	IconColor string `json:"iconColor,omitempty"`
 }
 
-// Group is a named list of saved sites.
+// Group is a named list of saved sites. Color is empty unless the user chose one.
 type Group struct {
 	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
 	Links []Link `json:"links"`
 }
 
@@ -181,19 +187,22 @@ func (s *Store) applyMigrations(ctx context.Context) error {
 		return err
 	}
 
-	newUserColumns := []struct{ name, definition string }{
-		{"preferences", "TEXT NULL"},
-		{"is_admin", "TINYINT(1) NOT NULL DEFAULT 0"},
-		{"disabled_at", "DATETIME NULL"},
-		{"last_seen_at", "DATETIME NULL"},
+	newColumns := []struct{ table, name, definition string }{
+		{"users", "preferences", "TEXT NULL"},
+		{"users", "is_admin", "TINYINT(1) NOT NULL DEFAULT 0"},
+		{"users", "disabled_at", "DATETIME NULL"},
+		{"users", "last_seen_at", "DATETIME NULL"},
+		{"link_groups", "color", "VARCHAR(7) NOT NULL DEFAULT ''"},
+		{"links", "icon", "TEXT NULL"},
+		{"links", "icon_color", "VARCHAR(7) NOT NULL DEFAULT ''"},
 	}
-	for _, column := range newUserColumns {
-		exists, err := s.columnExists(ctx, "users", column.name)
+	for _, column := range newColumns {
+		exists, err := s.columnExists(ctx, column.table, column.name)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			statement := fmt.Sprintf("ALTER TABLE users ADD COLUMN %s %s", column.name, column.definition)
+			statement := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", column.table, column.name, column.definition)
 			if _, err := s.db.ExecContext(ctx, statement); err != nil {
 				return err
 			}
@@ -254,8 +263,8 @@ func writeGroups(ctx context.Context, tx *sql.Tx, userID int64, groups []Group) 
 	}
 	for groupIndex, group := range groups {
 		result, err := tx.ExecContext(ctx,
-			"INSERT INTO link_groups (user_id, name, position) VALUES (?, ?, ?)",
-			userID, group.Name, groupIndex)
+			"INSERT INTO link_groups (user_id, name, color, position) VALUES (?, ?, ?, ?)",
+			userID, group.Name, group.Color, groupIndex)
 		if err != nil {
 			return err
 		}
@@ -265,8 +274,8 @@ func writeGroups(ctx context.Context, tx *sql.Tx, userID int64, groups []Group) 
 		}
 		for linkIndex, link := range group.Links {
 			if _, err := tx.ExecContext(ctx,
-				"INSERT INTO links (group_id, name, url, position) VALUES (?, ?, ?, ?)",
-				groupID, link.Name, link.URL, linkIndex); err != nil {
+				"INSERT INTO links (group_id, name, url, icon, icon_color, position) VALUES (?, ?, ?, ?, ?, ?)",
+				groupID, link.Name, link.URL, link.Icon, link.IconColor, linkIndex); err != nil {
 				return err
 			}
 		}
@@ -410,7 +419,7 @@ func (s *Store) setPreferences(ctx context.Context, userID int64, preferences ma
 
 func (s *Store) getGroups(ctx context.Context, userID int64) ([]Group, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, name FROM link_groups WHERE user_id = ? ORDER BY position", userID)
+		"SELECT id, name, color FROM link_groups WHERE user_id = ? ORDER BY position", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +430,7 @@ func (s *Store) getGroups(ctx context.Context, userID int64) ([]Group, error) {
 	for rows.Next() {
 		var id int64
 		group := Group{Links: []Link{}}
-		if err := rows.Scan(&id, &group.Name); err != nil {
+		if err := rows.Scan(&id, &group.Name, &group.Color); err != nil {
 			return nil, err
 		}
 		positions[id] = len(groups)
@@ -432,7 +441,7 @@ func (s *Store) getGroups(ctx context.Context, userID int64) ([]Group, error) {
 	}
 
 	linkRows, err := s.db.QueryContext(ctx,
-		`SELECT l.group_id, l.name, l.url FROM links l
+		`SELECT l.group_id, l.name, l.url, COALESCE(l.icon, ''), l.icon_color FROM links l
 		 JOIN link_groups g ON g.id = l.group_id
 		 WHERE g.user_id = ? ORDER BY l.position`, userID)
 	if err != nil {
@@ -442,7 +451,7 @@ func (s *Store) getGroups(ctx context.Context, userID int64) ([]Group, error) {
 	for linkRows.Next() {
 		var groupID int64
 		var link Link
-		if err := linkRows.Scan(&groupID, &link.Name, &link.URL); err != nil {
+		if err := linkRows.Scan(&groupID, &link.Name, &link.URL, &link.Icon, &link.IconColor); err != nil {
 			return nil, err
 		}
 		if position, ok := positions[groupID]; ok {
