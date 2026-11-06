@@ -3,13 +3,12 @@
 # Nothing is built here. The CI deploy key can only run an installed copy of this script,
 # ~/chrome-home-deploy.sh, so reinstall that copy by hand after changing this file.
 #
-# CI names the commit to deploy, which arrives in SSH_ORIGINAL_COMMAND. Run by hand, this deploys
-# the latest main branch.
+# CI sends the image as a gzipped `docker save` on standard input, and names its commit, which
+# arrives in SSH_ORIGINAL_COMMAND. To run it by hand: bash server-deploy.sh <commit> < image.tar.gz
 set -euo pipefail
 
 APP_DIR="$HOME/chrome-home"
 HEALTH_URL="http://127.0.0.1:13100/api/health"
-REGISTRY_IMAGE="ghcr.io/ruhul0/home-base"
 # Compose names this project's app image this, so restarts from the setup scripts keep using it.
 APP_IMAGE="chrome-home-app"
 KEEP_BACKUPS=14
@@ -30,16 +29,21 @@ wait_until_healthy() {
 
 previous="$(git rev-parse HEAD)"
 git fetch -q origin main
-next="${SSH_ORIGINAL_COMMAND:-$(git rev-parse origin/main)}"
+next="${SSH_ORIGINAL_COMMAND:-${1:-}}"
 if ! printf '%s' "$next" | grep -Eq '^[0-9a-f]{40}$'; then
   echo "That isn't a commit to deploy." >&2
   exit 1
 fi
+if [ -t 0 ]; then
+  echo "This needs the image on standard input." >&2
+  exit 1
+fi
 echo "Deploying ${next:0:7} (was ${previous:0:7})"
 
-# This comes first, so a missing image leaves the site exactly as it was.
-if ! docker pull -q "$REGISTRY_IMAGE:$next" >/dev/null; then
-  echo "The image for ${next:0:7} couldn't be pulled, so nothing changed." >&2
+# This comes first, so a bad image leaves the site exactly as it was. Loading it only adds a tag
+# named after the commit, so the running image isn't affected yet.
+if ! gunzip -c | docker load -q >/dev/null || ! docker image inspect "$APP_IMAGE:$next" >/dev/null 2>&1; then
+  echo "The image for ${next:0:7} couldn't be loaded, so nothing changed." >&2
   exit 1
 fi
 
@@ -51,11 +55,11 @@ ls -1t backups/chrome_home-*.sql | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm 
 
 docker tag "$APP_IMAGE:latest" "$APP_IMAGE:rollback"
 git reset -q --hard "$next"
-docker tag "$REGISTRY_IMAGE:$next" "$APP_IMAGE:latest"
+docker tag "$APP_IMAGE:$next" "$APP_IMAGE:latest"
 docker compose up -d --no-build app
 
 if wait_until_healthy; then
-  docker rmi "$REGISTRY_IMAGE:$next" >/dev/null
+  docker rmi "$APP_IMAGE:$next" >/dev/null
   docker image prune -f --filter "label=com.docker.compose.project=chrome-home" >/dev/null
   echo "Deployed ${next:0:7} and it's healthy."
   exit 0
