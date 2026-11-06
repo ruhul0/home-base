@@ -54,7 +54,7 @@ cd web && npm run build && npm run build:extension
 
 ## Deployment
 
-GitHub Actions builds the image, runs the tests against it and pushes that same image to `ghcr.io/ruhul0/home-base`. The server only pulls it and starts it, using `deploy/server-deploy.sh`, and rolls back if the app isn't healthy. Nothing is built on the server.
+GitHub Actions builds the image, runs the tests against it and sends that same image to the server over SSH. `deploy/server-deploy.sh` loads it, starts it and rolls back if the app isn't healthy. Nothing is built on the server.
 
 ## Self-hosting
 
