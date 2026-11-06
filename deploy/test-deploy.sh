@@ -39,6 +39,7 @@ cat > "$bin/docker" <<'EOF'
 echo "docker $*" >> "$HOME/docker.log"
 case "$*" in
   *mysqldump*) [ -f "$HOME/backup-fails" ] && exit 1; echo 'CREATE TABLE test;' ;;
+  pull*) [ -f "$HOME/pull-fails" ] && exit 1 ;;
 esac
 exit 0
 EOF
@@ -67,6 +68,9 @@ check "a healthy deploy succeeds" "$outcome" 0
 check "a healthy deploy moves to the new commit" "$(git -C "$HOME/chrome-home" rev-parse HEAD)" "$good"
 check "a deploy backs up the database first" "$(ls "$HOME"/chrome-home/backups/*.sql | wc -l | tr -d ' ')" 1
 check "a deploy keeps the server's secrets" "$(cat "$HOME/chrome-home/.env")" "SECRET=keep"
+check "a deploy pulls that commit's image" "$(grep -c "docker pull -q ghcr.io/ruhul0/home-base:$good" "$HOME/docker.log")" 1
+check "a deploy runs that image" "$(grep -c "docker tag ghcr.io/ruhul0/home-base:$good chrome-home-app:latest" "$HOME/docker.log")" 1
+check "a deploy keeps the old image for rollback" "$(grep -c "docker tag chrome-home-app:latest chrome-home-app:rollback" "$HOME/docker.log")" 1
 
 touch "$HOME/unhealthy"
 publish bad >/dev/null
@@ -76,8 +80,29 @@ check "an unhealthy deploy reports failure" "$outcome" 1
 check "an unhealthy deploy rolls back the code" "$(git -C "$HOME/chrome-home" rev-parse HEAD)" "$good"
 check "a rollback restores the old files" "$(cat "$HOME/chrome-home/version")" "good"
 check "a rollback keeps the server's secrets" "$(cat "$HOME/chrome-home/.env")" "SECRET=keep"
-check "a rollback rebuilds the app" "$(tail -1 "$HOME/docker.log")" "docker compose up -d --build app"
+check "a rollback restarts the app" "$(tail -1 "$HOME/docker.log")" "docker compose up -d --no-build app"
+check "a rollback restores the old image" "$(tail -2 "$HOME/docker.log" | head -1)" "docker tag chrome-home-app:rollback chrome-home-app:latest"
 rm "$HOME/unhealthy"
+
+touch "$HOME/pull-fails"
+backups_before="$(ls "$HOME"/chrome-home/backups/*.sql | wc -l | tr -d ' ')"
+publish missing-image >/dev/null
+outcome=0
+bash "$script" >/dev/null 2>&1 || outcome=$?
+check "a missing image stops the deploy" "$outcome" 1
+check "a missing image leaves the code alone" "$(git -C "$HOME/chrome-home" rev-parse HEAD)" "$good"
+check "a missing image doesn't touch the database" "$(ls "$HOME"/chrome-home/backups/*.sql | wc -l | tr -d ' ')" "$backups_before"
+rm "$HOME/pull-fails"
+
+named="$(publish named)"
+publish later >/dev/null
+outcome=0
+SSH_ORIGINAL_COMMAND="$named" bash "$script" >/dev/null 2>&1 || outcome=$?
+check "CI can name the commit to deploy" "$outcome $(git -C "$HOME/chrome-home" rev-parse HEAD)" "0 $named"
+outcome=0
+SSH_ORIGINAL_COMMAND='main; touch hacked' bash "$script" >/dev/null 2>&1 || outcome=$?
+check "anything but a commit is refused" "$outcome $(git -C "$HOME/chrome-home" rev-parse HEAD)" "1 $named"
+good="$named"
 
 newest="$(publish fine)"
 touch "$HOME/backup-fails"
@@ -92,6 +117,7 @@ for number in $(seq 1 20); do touch "$HOME/chrome-home/backups/chrome_home-2020-
 bash "$script" >/dev/null 2>&1
 check "only the newest backups are kept" "$(ls "$HOME"/chrome-home/backups/*.sql | wc -l | tr -d ' ')" 14
 check "the deploy finished on the newest commit" "$(git -C "$HOME/chrome-home" rev-parse HEAD)" "$newest"
+check "nothing is ever built on the server" "$(grep -c -e '--build' -e 'docker build' "$HOME/docker.log" || true)" 0
 test "$first" != "$newest"
 
 if [ "$failures" -gt 0 ]; then
