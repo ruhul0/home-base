@@ -38,6 +38,7 @@ jobs:
           npm ci
           npm run typecheck
           npm run lint
+          npm test
 
       - name: Check script syntax
         run: |

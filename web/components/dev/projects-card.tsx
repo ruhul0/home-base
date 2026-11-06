@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { daysUntil, expirySeverity } from "@/lib/attention";
+import { daysUntil, expirySeverity, isDown, isFailedRun } from "@/lib/attention";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/commands";
 import { normalizeUrl } from "@/lib/links";
@@ -176,7 +176,7 @@ export function ProjectsCard({
     setEditing(null);
   }
 
-  const downCount = (projects ?? []).filter(({ monitor }) => !monitor.up).length;
+  const downCount = (projects ?? []).filter(({ monitor }) => isDown(monitor)).length;
   const title = list.length ? `Projects · ${list.length}${projects ? (downCount ? ` · ${downCount} down` : " · all up") : ""}` : "Projects";
 
   return (
@@ -188,13 +188,13 @@ export function ProjectsCard({
             {list.map((project) => {
               const status = projects?.find(({ id }) => id === project.id);
               const monitor = status?.monitor;
-              const dot = !monitor ? "status-neutral" : monitor.up ? "status-success" : "status-error";
+              const dot = !monitor ? "status-neutral" : monitor.up ? "status-success" : monitor.unconfirmed ? "status-warning" : "status-error";
               const isRunning = timer.running?.projectId === project.id;
               const uptime = monitor?.history?.uptime24h;
               return (
                 <li key={project.id} className="grid content-start gap-2 rounded-lg bg-base-content/5 p-3">
                   <div className="flex items-center gap-2">
-                    <span className={`status flex-none ${dot}`} aria-label={!monitor ? "Not checked yet" : monitor.up ? "Up" : "Down"} />
+                    <span className={`status flex-none ${dot}`} aria-label={!monitor ? "Not checked yet" : monitor.up ? "Up" : monitor.unconfirmed ? "Failed one check" : "Down"} />
                     <a href={project.url} className="min-w-0 flex-1 truncate text-sm font-semibold hover:underline" title={project.notes || project.url}>
                       {project.name}
                     </a>
@@ -207,17 +207,17 @@ export function ProjectsCard({
                       <PencilIcon className="size-3.5" />
                     </button>
                   </div>
-                  {monitor && !monitor.up && <p className="truncate text-xs text-error" title={monitor.problem}>{monitor.problem}</p>}
+                  {monitor && !monitor.up && <p className={`truncate text-xs ${monitor.unconfirmed ? "text-warning" : "text-error"}`} title={monitor.problem}>{monitor.problem}{monitor.unconfirmed ? " Checking again." : ""}</p>}
                   <p className="truncate font-mono text-xs opacity-70">{new URL(project.url).hostname}</p>
                   <div className="flex flex-wrap items-center gap-1">
                     {project.url.startsWith("https:") && <ExpiryBadge label="SSL" date={status?.certificateExpires ?? null} />}
                     <ExpiryBadge label="Domain" date={status?.domainExpires ?? null} />
                     {status?.ci && (
-                      <a href={status.ci.url} className={`badge badge-sm font-mono ${status.ci.conclusion === "failure" ? "badge-error" : status.ci.conclusion === "success" ? "badge-success" : "badge-ghost"}`} title={`${status.ci.workflow} on ${status.ci.branch}, ${timeAgo(status.ci.updatedAt)}`}>
+                      <a href={status.ci.url} className={`badge badge-sm font-mono ${isFailedRun(status.ci) ? "badge-error" : status.ci.conclusion === "success" ? "badge-success" : "badge-ghost"}`} title={`${status.ci.workflow} on ${status.ci.branch}, ${timeAgo(status.ci.updatedAt)}`}>
                         CI {status.ci.conclusion || status.ci.status} · {timeAgo(status.ci.updatedAt)}
                       </a>
                     )}
-                    {project.repo && !status?.ci && status && <span className="badge badge-ghost badge-sm font-mono" title="No workflow runs found, or the GitHub App can't read this repository's Actions.">CI ?</span>}
+                    {status?.ciUnreadable && <span className="badge badge-ghost badge-sm font-mono" title="GitHub wouldn't share this repository's workflow runs. The GitHub App may need the Actions permission, or access to this repository.">CI ?</span>}
                   </div>
                   <div className="-ml-1.5 flex flex-wrap items-center gap-0.5">
                     <Button variant="ghost" size="sm" aria-pressed={isRunning} onClick={() => void (isRunning ? timer.stop() : timer.start(project.id))}>
@@ -246,7 +246,7 @@ export function ProjectsCard({
                         <TerminalIcon /> SSH
                       </Button>
                     )}
-                    {status?.ci?.conclusion === "failure" && (
+                    {status?.ci && isFailedRun(status.ci) && (
                       <Button variant="ghost" size="sm" onClick={() => onRerun(status.ci!.repo, status.ci!.id)}>
                         <RotateCwIcon /> Re-run
                       </Button>

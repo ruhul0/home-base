@@ -6,7 +6,7 @@ export default function PrivacyPage() {
   return (
     <main className="home-policy mx-auto max-w-2xl px-6 py-12">
       <h1 className="mb-1 text-3xl font-bold tracking-tight">Home Base privacy</h1>
-      <p className="text-muted-foreground">Last updated 5 November 2026.</p>
+      <p className="text-muted-foreground">Last updated 6 November 2026.</p>
 
       <h2>What is stored on our server</h2>
       <ul>
@@ -35,7 +35,7 @@ export default function PrivacyPage() {
 
       <h2>Optional private GitHub access</h2>
       <p>
-        You can choose to connect a separate Home Base GitHub App, which has read-only access to the repositories you select. It can&apos;t change your code or settings. Its access tokens are encrypted on our server, are never sent to your browser and are never shown to the administrator through the site. Pull requests, issues and repository details it reads are held in memory for a few minutes and not saved to the database. Disconnecting deletes the tokens and withdraws the access on GitHub, and you can also remove the app from your GitHub settings at any time.
+        You can choose to connect a separate Home Base GitHub App, which can read the repositories you select and can&apos;t change your code, issues or settings. There&apos;s one exception: if the administrator gives the app the Actions read and write permission and you accept that on GitHub, you can re-run and start workflows in those repositories from this site. They only run when you ask, each deploy you start is recorded in the server&apos;s log, and a workflow can do whatever it&apos;s written to do, including deploying or changing code. Its access tokens are encrypted on our server, are never sent to your browser and are never shown to the administrator through the site. Pull requests, issues and repository details it reads are held in memory for a few minutes and not saved to the database. Disconnecting deletes the tokens and withdraws the access on GitHub, and you can also remove the app from your GitHub settings at any time.
       </p>
 
       <h2>What the Chrome extension reads</h2>
@@ -45,12 +45,12 @@ export default function PrivacyPage() {
 
       <h2>How your data is used</h2>
       <p>
-        Your data is only used to run Home Base. It isn&apos;t sold, shared for advertising or used to track you across websites. Your data is stored on a private server, and Cloudflare carries traffic to and from it. Backups are encrypted before leaving the server and kept in Cloudflare R2, where neither Cloudflare nor the server can read them.
+        Your data is only used to run Home Base. It isn&apos;t sold, shared for advertising or used to track you across websites. Your data is stored on a private server, and Cloudflare carries traffic to and from it. Before each update to the site, the database is copied to a private folder on the same server. These copies aren&apos;t encrypted, apart from the GitHub tokens inside them, and they aren&apos;t kept anywhere else.
       </p>
 
       <h2>Removing your data</h2>
       <p>
-        You can edit or remove your saved sites at any time. You can sign out other devices or permanently delete your account yourself, under Customize and then Account. This deletes everything listed above, except that encrypted backups taken earlier are kept for up to 30 days before being removed.
+        You can edit or remove your saved sites at any time. You can sign out other devices or permanently delete your account yourself, under Customize and then Account. This deletes everything listed above, except that copies of the database taken earlier stay on the server until newer ones replace them. The 14 newest are kept, and a new one is made with each update, so there&apos;s no fixed date for this.
       </p>
     </main>
   );

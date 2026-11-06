@@ -717,9 +717,19 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   const projectStatus = r.data.projects?.[0];
   check('project cards show live status', projectStatus?.monitor.up === true && projectStatus.monitor.status === 200, JSON.stringify(projectStatus).slice(0, 300));
   check('project cards show SSL and domain dates', projectStatus?.certificateExpires?.startsWith('2026-11-20') && projectStatus.domainExpires.startsWith('2027-01-01'), JSON.stringify(projectStatus).slice(0, 300));
-  check('project cards show CI', projectStatus?.ci?.conclusion === 'failure' && projectStatus.ci.id === 1, JSON.stringify(projectStatus?.ci));
+  check('a passing scheduled run does not hide failed CI', projectStatus?.ci?.conclusion === 'failure' && projectStatus.ci.id === 1, JSON.stringify(projectStatus?.ci));
+  check('readable CI is not reported as unreadable', projectStatus?.ciUnreadable === false, JSON.stringify(projectStatus));
   r = await apiCall('/dev/projects', { token: dev.owner });
   check("another user doesn't see those projects", r.data.projects.length === 0, JSON.stringify(r.data).slice(0, 100));
+
+  const beforeExtraRepos = (await apiCall('/dev/workspace', { token: dev.alice })).data;
+  await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: { ...beforeExtraRepos, projects: [siteProject, { ...siteProject, id: 'site-2', repo: 'alice/hidden' }, { ...siteProject, id: 'site-3', repo: 'alice/quiet' }] } });
+  r = await apiCall('/dev/projects', { token: dev.alice });
+  const projectById = (id) => r.data.projects.find((project) => project.id === id);
+  check('a repository GitHub refuses is reported as unreadable', projectById('site-2')?.ci === null && projectById('site-2')?.ciUnreadable === true, JSON.stringify(projectById('site-2')));
+  check('a repository with no runs is not reported as unreadable', projectById('site-3')?.ci === null && projectById('site-3')?.ciUnreadable === false, JSON.stringify(projectById('site-3')));
+  const afterExtraRepos = (await apiCall('/dev/workspace', { token: dev.alice })).data;
+  await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: { ...afterExtraRepos, projects: [siteProject] } });
 
   let rollup = [];
   for (let attempt = 0; attempt < 20 && !rollup.length; attempt += 1) {
@@ -730,9 +740,22 @@ const apiCall = async (path, { token, method = 'GET', body } = {}) => {
   let incidents = [];
   for (let attempt = 0; attempt < 20 && !incidents.length; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 500));
-    [incidents] = await connection.query("SELECT problem, ended_at FROM monitor_incidents WHERE url_hash = SHA2('http://fake-github:4000/down', 256)");
+    [incidents] = await connection.query("SELECT problem, started_at, ended_at FROM monitor_incidents WHERE url_hash = SHA2('http://fake-github:4000/down', 256)");
   }
   check('a failing site opens one incident', incidents.length === 1 && incidents[0].ended_at === null && incidents[0].problem === 'Returned HTTP 500.', JSON.stringify(incidents));
+  const [[{ firstFailure }]] = await connection.query("SELECT MIN(checked_at) AS firstFailure FROM monitor_checks WHERE up = 0 AND url_hash = SHA2('http://fake-github:4000/down', 256)");
+  check('an incident starts from the first failed check', incidents[0]?.started_at?.getTime() === firstFailure?.getTime(), `${incidents[0]?.started_at} ${firstFailure}`);
+
+  const beforeBlip = (await apiCall('/dev/workspace', { token: dev.alice })).data;
+  await apiCall('/dev/workspace', { token: dev.alice, method: 'PUT', body: { ...beforeBlip, monitors: [...beforeBlip.monitors, { name: 'Blip', url: 'http://fake-github:4000/blip' }] } });
+  let blipChecks = [];
+  for (let attempt = 0; attempt < 40 && blipChecks.length < 3; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    [blipChecks] = await connection.query("SELECT up FROM monitor_checks WHERE url_hash = SHA2('http://fake-github:4000/blip', 256) ORDER BY id");
+  }
+  check('a brief failure is still recorded in the check history', blipChecks.length >= 3 && blipChecks[0].up === 0 && blipChecks.slice(1).every((row) => row.up === 1), JSON.stringify(blipChecks));
+  const [blipIncidents] = await connection.query("SELECT id FROM monitor_incidents WHERE url_hash = SHA2('http://fake-github:4000/blip', 256)");
+  check('one failed check does not open an incident', blipIncidents.length === 0, JSON.stringify(blipIncidents));
   base = MAIN;
 
   r = await apiCall('/dev/time/start', { token: dev.alice, method: 'POST', body: { projectId: 'site-1', note: 'Checkout work' } });
