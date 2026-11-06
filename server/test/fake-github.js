@@ -191,10 +191,13 @@ http.createServer((req, res) => {
   if (url.pathname === '/repos/alice/quiet/actions/runs') return respond({ workflow_runs: [] });
   // A newer passing scheduled job sits on top of the failure, as it would in a real repository.
   if (url.pathname === '/repos/alice/app/actions/runs') {
+    const failedRun = { id: 1, workflow_id: 10, name: 'CI', head_branch: 'main', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/alice/app/actions/runs/1', updated_at: '2026-11-01T00:00:00Z' };
+    // The work log asks by date rather than by branch.
+    if (url.searchParams.has('created')) return respond({ workflow_runs: [failedRun] });
     if (url.searchParams.get('branch') !== 'main') return respond({ workflow_runs: [] });
     return respond({ workflow_runs: [
       { id: 2, workflow_id: 20, name: 'Nightly', head_branch: 'main', status: 'completed', conclusion: 'success', html_url: 'https://github.com/alice/app/actions/runs/2', updated_at: '2026-11-02T00:00:00Z' },
-      { id: 1, workflow_id: 10, name: 'CI', head_branch: 'main', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/alice/app/actions/runs/1', updated_at: '2026-11-01T00:00:00Z' },
+      failedRun,
     ] });
   }
   if (url.pathname === '/users/alice') return respond({ name: 'Alice', public_repos: 3, followers: 5, following: 2 });
