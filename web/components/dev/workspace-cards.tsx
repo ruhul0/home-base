@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { api, SignedOutError } from "@/lib/api";
+import { isDown } from "@/lib/attention";
 import { normalizeUrl } from "@/lib/links";
 import type { MonitorResult, Preferences, Workspace } from "@/lib/types";
 import type { SaveWorkspace } from "@/lib/use-workspace";
@@ -65,10 +66,10 @@ export function WorkspaceCards({
       setResults(latest);
 
       // Alerts live on the page: the tab title shows outages, and new ones raise a message.
-      const down = new Set(latest.filter((result) => !result.up).map((result) => result.url));
+      const down = new Set(latest.filter(isDown).map((result) => result.url));
       if (knownDown.current) {
         for (const result of latest) {
-          if (!result.up && !knownDown.current.has(result.url)) toast.error(`${result.name} is down. ${result.problem ?? ""}`, { id: `down-${result.url}` });
+          if (isDown(result) && !knownDown.current.has(result.url)) toast.error(`${result.name} is down. ${result.problem ?? ""}`, { id: `down-${result.url}` });
         }
       }
       knownDown.current = down;
@@ -91,7 +92,7 @@ export function WorkspaceCards({
   }, [checkMonitors, hasWorkspace]);
 
   // Alerts live on the page: the tab title counts every monitor and project that's down.
-  const downSignature = [...new Set([...results.filter((result) => !result.up).map((result) => result.url), ...projectsDown])].length;
+  const downSignature = [...new Set([...results.filter(isDown).map((result) => result.url), ...projectsDown])].length;
   useEffect(() => {
     document.title = downSignature ? `(${downSignature} down) ${PAGE_TITLE}` : PAGE_TITLE;
     return () => {
@@ -128,7 +129,7 @@ export function WorkspaceCards({
   }
 
   const hasMonitors = (workspace?.monitors.length ?? 0) > 0;
-  const upCount = results.filter((result) => result.up).length;
+  const upCount = results.filter((result) => !isDown(result)).length;
 
   return (
     <>
@@ -140,16 +141,16 @@ export function WorkspaceCards({
               <ul className="grid gap-0.5">
                 {workspace.monitors.map((monitor, index) => {
                   const result = results.find((item) => item.url === monitor.url);
-                  const state = !result ? "status-neutral" : result.up ? "status-success" : "status-error";
+                  const state = !result ? "status-neutral" : result.up ? "status-success" : result.unconfirmed ? "status-warning" : "status-error";
                   return (
                     <li key={monitor.url} className="group flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-base-content/10">
-                      <span className={`status ${state} flex-none`} aria-label={!result ? "Not checked yet" : result.up ? "Up" : "Down"} />
+                      <span className={`status ${state} flex-none`} aria-label={!result ? "Not checked yet" : result.up ? "Up" : result.unconfirmed ? "Failed one check" : "Down"} />
                       <a href={monitor.url} className="min-w-0 flex-1" title={result?.problem ?? monitor.url}>
                         <span className="block truncate text-sm">{monitor.name}</span>
                         {result && !result.up && (
-                          <span className="block truncate text-xs text-error">
+                          <span className={`block truncate text-xs ${result.unconfirmed ? "text-warning" : "text-error"}`}>
                             {result.problem}
-                            {result.history?.downSince ? ` Down since ${timeAgo(result.history.downSince)}.` : ""}
+                            {result.unconfirmed ? " Checking again." : result.history?.downSince ? ` Down since ${timeAgo(result.history.downSince)}.` : ""}
                           </span>
                         )}
                         {result && <HistoryBars result={result} />}

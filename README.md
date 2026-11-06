@@ -5,7 +5,7 @@ A self-hosted start page for developers: a command palette, search shortcuts, Gi
 ## Features
 
 - **Command palette and shortcuts:** press `⌘K`, or use `/`, `t`, `e`, `c` and `?`. Search shortcuts include `gh`, `npm`, `mdn`, `so`, `pypi`, `go`, `crates` and `docker`.
-- **GitHub panel:** pull requests, issues, repositories, activity and CI status. Sign-in only reads public data. Users can opt in to a read-only GitHub App to add private repositories and review requests.
+- **GitHub panel:** pull requests, issues, repositories, activity and CI status. Sign-in only reads public data. Users can opt in to a GitHub App to add private repositories and review requests. It only reads, unless you also give it Actions write for re-runs and deploys.
 - **Needs attention:** one list of down sites, failed CI, review requests, full disks, and SSL and domain expiry at 30, 14 and 7 days. It says what it couldn't check, such as CI on repositories the GitHub App can't read, instead of implying those are fine.
 - **Projects:** a card per client with production and staging links, repository, CI, uptime, SSL and domain dates and a copyable SSH command, all reachable from `⌘K`.
 - **Client reports:** monthly uptime, outages, shipped commits and optional tracked time, as Markdown. Nothing is sent automatically.
@@ -65,7 +65,9 @@ If a CDN sits in front of the site, make sure it doesn't cache `/api/` responses
 
 ## Backups
 
-The `backup` service encrypts the database and `.env` with [age](https://github.com/FiloSottile/age) and uploads them to Cloudflare R2 daily, using `deploy/set-r2-backup.sh`. The private key is never on the server. See `deploy/restore-backup.md` to restore, and `deploy/test-backup.sh` for a tested full cycle.
+Each deploy copies the database to `backups/` on the same server and keeps the newest 14. These copies aren't encrypted, and they won't survive losing the server.
+
+Off-site backups are optional, and the live site doesn't use them. The `backup` service encrypts the database and `.env` with [age](https://github.com/FiloSottile/age) and uploads them to Cloudflare R2 daily. Deploys don't start it, so configure it with `deploy/set-r2-backup.sh`, which keeps the private key off the server. See `deploy/restore-backup.md` to restore, and `deploy/test-backup.sh` for a tested full cycle. If you turn this on, update the privacy page to match.
 
 ## Security
 

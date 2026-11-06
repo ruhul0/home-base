@@ -33,7 +33,11 @@ const (
 	maxNotesLength     = 20000
 )
 
-const maxOpenItems = 6
+const (
+	maxOpenItems = 6
+	// Enough runs to reach each workflow's latest, even with a frequent scheduled job alongside it.
+	runsPerBranch = 30
+)
 
 // cached keeps one recent value per key. If a refresh fails, the last good value is still served,
 // so a GitHub or Hacker News outage doesn't blank the dashboard.
@@ -112,7 +116,7 @@ type DevServices struct {
 	monitors      *cached[MonitorResult]
 	client        *http.Client
 	dialer        *net.Dialer
-	projectCI     *cached[*GitHubRun]
+	projectCI     *cached[projectCIResult]
 	workLogs      *cached[WorkLog]
 }
 
@@ -120,7 +124,7 @@ func newDevServices() *DevServices {
 	dialer := newMonitorDialer()
 	return &DevServices{
 		dialer:        dialer,
-		projectCI:     newCached[*GitHubRun](),
+		projectCI:     newCached[projectCIResult](),
 		workLogs:      newCached[WorkLog](),
 		github:        newCached[GitHubDashboard](),
 		private:       newCached[GitHubDashboard](),
@@ -163,6 +167,10 @@ type GitHubRepo struct {
 	Language    string `json:"language"`
 	Stars       int    `json:"stars"`
 	PushedAt    string `json:"pushedAt"`
+	// DefaultBranch saves a request when the repository listing already gave it. If it's empty, CI looks it up.
+	DefaultBranch string `json:"-"`
+	// watchBranch is a second branch whose CI matters, such as the one a project deploys from.
+	watchBranch string
 }
 
 // GitHubItem is an open pull request or issue.
@@ -186,8 +194,93 @@ type GitHubRun struct {
 	UpdatedAt  string `json:"updatedAt"`
 }
 
-// latestRuns reads each repository's newest workflow run. It returns true if any repository
-// refused, which for a connected user usually means the app is missing the Actions permission.
+// workflowRun is one run as GitHub describes it.
+type workflowRun struct {
+	ID         int64  `json:"id"`
+	WorkflowID int64  `json:"workflow_id"`
+	Name       string `json:"name"`
+	HeadBranch string `json:"head_branch"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	HTMLURL    string `json:"html_url"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+// runFailed leaves out cancelled runs, because a newer run often cancels an older one on purpose.
+func runFailed(conclusion string) bool {
+	return conclusion == "failure" || conclusion == "timed_out" || conclusion == "startup_failure"
+}
+
+// currentRun picks the run that best describes a repository right now, from runs listed newest first.
+// Only the newest run of each workflow on each branch counts, so a fixed failure stops counting. A
+// failure then beats any success, so a passing scheduled job can't hide a failed deploy.
+func currentRun(runs []workflowRun) (workflowRun, bool) {
+	seen := map[string]bool{}
+	var best workflowRun
+	found := false
+	for _, run := range runs {
+		key := strconv.FormatInt(run.WorkflowID, 10) + ":" + run.HeadBranch
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		failed, bestFailed := runFailed(run.Conclusion), runFailed(best.Conclusion)
+		if !found || (failed && !bestFailed) || (failed == bestFailed && run.UpdatedAt > best.UpdatedAt) {
+			best = run
+			found = true
+		}
+	}
+	return best, found
+}
+
+// repoRun describes a repository's CI on its default branch and any watched branch, which leaves out
+// work in progress on feature branches. It returns nil if those branches have no runs, and an error
+// if GitHub wouldn't say, so the two aren't confused.
+func repoRun(ctx context.Context, token string, repo GitHubRepo) (*GitHubRun, error) {
+	owner, name, ok := strings.Cut(repo.Name, "/")
+	if !ok {
+		return nil, fmt.Errorf("repository %q has no owner", repo.Name)
+	}
+	base := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name)
+	branch := repo.DefaultBranch
+	if branch == "" {
+		var details struct {
+			DefaultBranch string `json:"default_branch"`
+		}
+		if err := githubGetAs(ctx, token, base, &details); err != nil {
+			return nil, err
+		}
+		branch = details.DefaultBranch
+	}
+	branches := []string{branch}
+	if repo.watchBranch != "" && repo.watchBranch != branch {
+		branches = append(branches, repo.watchBranch)
+	}
+
+	runs := []workflowRun{}
+	for _, watched := range branches {
+		var found struct {
+			WorkflowRuns []workflowRun `json:"workflow_runs"`
+		}
+		query := url.Values{"per_page": {strconv.Itoa(runsPerBranch)}, "branch": {watched}}
+		if err := githubGetAs(ctx, token, base+"/actions/runs?"+query.Encode(), &found); err != nil {
+			return nil, err
+		}
+		runs = append(runs, found.WorkflowRuns...)
+	}
+	run, found := currentRun(runs)
+	if !found {
+		return nil, nil
+	}
+	link := safeLink(run.HTMLURL)
+	if link == "" {
+		return nil, nil
+	}
+	return &GitHubRun{ID: run.ID, Repo: repo.Name, Workflow: run.Name, Branch: run.HeadBranch, Status: run.Status, Conclusion: run.Conclusion, URL: link, UpdatedAt: run.UpdatedAt}, nil
+}
+
+// latestRuns describes each repository's CI. It returns true if any repository refused, which for a
+// connected user usually means the app is missing the Actions permission.
 func latestRuns(ctx context.Context, token string, repos []GitHubRepo) ([]GitHubRun, bool) {
 	var (
 		mutex  sync.Mutex
@@ -199,34 +292,15 @@ func latestRuns(ctx context.Context, token string, repos []GitHubRepo) ([]GitHub
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			owner, name, ok := strings.Cut(repo.Name, "/")
-			if !ok {
-				return
-			}
-			var found struct {
-				WorkflowRuns []struct {
-					ID         int64  `json:"id"`
-					Name       string `json:"name"`
-					HeadBranch string `json:"head_branch"`
-					Status     string `json:"status"`
-					Conclusion string `json:"conclusion"`
-					HTMLURL    string `json:"html_url"`
-					UpdatedAt  string `json:"updated_at"`
-				} `json:"workflow_runs"`
-			}
-			err := githubGetAs(ctx, token, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/actions/runs?per_page=1", &found)
+			run, err := repoRun(ctx, token, repo)
 			mutex.Lock()
 			defer mutex.Unlock()
 			if err != nil {
 				failed = true
 				return
 			}
-			if len(found.WorkflowRuns) == 0 {
-				return
-			}
-			run := found.WorkflowRuns[0]
-			if link := safeLink(run.HTMLURL); link != "" {
-				runs = append(runs, GitHubRun{ID: run.ID, Repo: repo.Name, Workflow: run.Name, Branch: run.HeadBranch, Status: run.Status, Conclusion: run.Conclusion, URL: link, UpdatedAt: run.UpdatedAt})
+			if run != nil {
+				runs = append(runs, *run)
 			}
 		}()
 	}
@@ -408,13 +482,14 @@ func fetchGitHubDashboard(ctx context.Context, login, token string) (GitHubDashb
 	dashboard.Following = profile.Following
 
 	var repos []struct {
-		FullName    string `json:"full_name"`
-		HTMLURL     string `json:"html_url"`
-		Description string `json:"description"`
-		Language    string `json:"language"`
-		Stars       int    `json:"stargazers_count"`
-		PushedAt    string `json:"pushed_at"`
-		Private     bool   `json:"private"`
+		FullName      string `json:"full_name"`
+		HTMLURL       string `json:"html_url"`
+		Description   string `json:"description"`
+		Language      string `json:"language"`
+		Stars         int    `json:"stargazers_count"`
+		PushedAt      string `json:"pushed_at"`
+		Private       bool   `json:"private"`
+		DefaultBranch string `json:"default_branch"`
 	}
 	reposPath := "/users/" + escaped + "/repos?sort=pushed&per_page=6"
 	if token != "" {
@@ -429,7 +504,7 @@ func fetchGitHubDashboard(ctx context.Context, login, token string) (GitHubDashb
 	}
 	for _, repo := range repos {
 		if link := safeLink(repo.HTMLURL); link != "" {
-			dashboard.Repos = append(dashboard.Repos, GitHubRepo{Private: repo.Private, Name: repo.FullName, URL: link, Description: repo.Description, Language: repo.Language, Stars: repo.Stars, PushedAt: repo.PushedAt})
+			dashboard.Repos = append(dashboard.Repos, GitHubRepo{Private: repo.Private, Name: repo.FullName, URL: link, Description: repo.Description, Language: repo.Language, Stars: repo.Stars, PushedAt: repo.PushedAt, DefaultBranch: repo.DefaultBranch})
 		}
 	}
 
@@ -778,6 +853,17 @@ type MonitorResult struct {
 	Problem   string          `json:"problem,omitempty"`
 	CheckedAt string          `json:"checkedAt"`
 	History   *MonitorHistory `json:"history,omitempty"`
+	// Unconfirmed means this check failed but the one before it didn't, so it may only be a blip.
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+}
+
+// markUnconfirmed needs History to be set. A site counts as down once two checks in a row have failed.
+func (r *MonitorResult) markUnconfirmed() {
+	if r.Up || r.History == nil {
+		return
+	}
+	points := r.History.Points
+	r.Unconfirmed = len(points) == 0 || points[len(points)-1].Up
 }
 
 func (d *DevServices) check(ctx context.Context, address string) MonitorResult {
@@ -832,6 +918,7 @@ func (a *App) handleDevMonitors(w http.ResponseWriter, r *http.Request, current 
 			result.Name = monitor.Name
 			if history, err := a.store.monitorHistory(context.WithoutCancel(r.Context()), monitor.URL); err == nil {
 				result.History = &history
+				result.markUnconfirmed()
 			} else {
 				log.Printf("reading monitor history failed: %v", err)
 			}

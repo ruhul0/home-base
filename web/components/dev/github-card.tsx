@@ -70,7 +70,8 @@ function ConnectDialog({ open, onOpenChange, onConnect, connecting }: { open: bo
         </DialogHeader>
         <ul className="grid list-disc gap-1.5 pl-5 text-sm">
           <li>You choose which repositories the Home Base GitHub App can see.</li>
-          <li>Its access is read-only, so it can&apos;t change code, issues or settings.</li>
+          <li>It reads those repositories, and can&apos;t change code, issues or settings.</li>
+          <li>If the app also has the Actions read and write permission and you accept it on GitHub, you can re-run and start workflows here. They only run when you ask, and a workflow can do whatever it&apos;s written to do, including deploying.</li>
           <li>Tokens are encrypted on the server and are never sent to your browser.</li>
           <li>Whoever runs this server holds the encryption key, so only connect if you trust them.</li>
           <li>Disconnect at any time, which deletes the tokens and withdraws access.</li>
@@ -262,7 +263,7 @@ export function GitHubCard({ onSignedOut }: { onSignedOut: () => void }) {
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-base-content/5 px-3 py-2">
               <span className="flex items-center gap-2 text-sm">
                 <ShieldCheckIcon className="size-4 flex-none text-primary" aria-hidden />
-                Add private repositories and review requests with read-only access.
+                Add private repositories and review requests. You choose which repositories.
               </span>
               {isExtension() ? (
                 <Button size="sm" render={<a href={`${SERVER_URL}/newtab`} target="_blank" rel="noopener" />}>
@@ -280,7 +281,7 @@ export function GitHubCard({ onSignedOut }: { onSignedOut: () => void }) {
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-base-content/5 px-3 py-2">
               <span className="flex items-center gap-2 text-sm">
                 <ShieldCheckIcon className="size-4 flex-none text-success" aria-hidden />
-                Private GitHub connected, read-only.
+                Private GitHub connected.
               </span>
               <span className="flex flex-wrap gap-1.5">
                 {response.manageUrl && (

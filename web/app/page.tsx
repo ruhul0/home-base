@@ -7,7 +7,7 @@ import { ExtensionButton, ReturningVisitor } from "@/components/landing/returnin
 const FEATURES = [
   { icon: CommandIcon, title: "Command palette", text: "Press ⌘K to jump to any site, tool or action. Everything works from the keyboard." },
   { icon: SearchIcon, title: "Search shortcuts", text: "Type gh, npm, mdn, so, pypi, go, crates or docker before a search. gh owner/repo opens the repository." },
-  { icon: GitPullRequestIcon, title: "Your GitHub at a glance", text: "See your pull requests, CI status, review requests, issues and activity. Connect a read-only GitHub App to include private repositories." },
+  { icon: GitPullRequestIcon, title: "Your GitHub at a glance", text: "See your pull requests, CI status, review requests, issues and activity. Connect a GitHub App to include the private repositories you choose." },
   { icon: ActivityIcon, title: "Uptime monitors", text: "Add your sites and APIs. They're checked in the background, with response times and 7 days of uptime history." },
   { icon: BracesIcon, title: "Dev toolbox", text: "JSON, JWT, Base64, URL encoding, timestamps, UUIDs, hashes and regex, all running in your browser." },
   { icon: SquareTerminalIcon, title: "Your daily workspace", text: "Todos, a scratchpad for commands and snippets, Unix time, world clocks and Hacker News." },

@@ -17,6 +17,7 @@ let lastAppToken = null;
 let revokedAll = false;
 let grantsRevoked = 0;
 let reruns = 0;
+let blipHits = 0;
 const deploys = [];
 
 http.createServer((req, res) => {
@@ -101,6 +102,12 @@ http.createServer((req, res) => {
   const url = new URL(req.url, 'http://fake');
 
   if (url.pathname === '/up') return respond({ ok: true });
+  // Fails once, then works, like a brief network problem.
+  if (url.pathname === '/blip') {
+    blipHits += 1;
+    if (blipHits === 1) res.statusCode = 500;
+    return respond({});
+  }
   if (url.pathname === '/down') {
     res.statusCode = 500;
     return respond({});
@@ -179,9 +186,22 @@ http.createServer((req, res) => {
     return undefined;
   }
   if (req.url === '/__test/reruns') return respond({ reruns });
-  if (url.pathname === '/repos/alice/app/actions/runs') return respond({ workflow_runs: [{ id: 1, name: 'CI', head_branch: 'main', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/alice/app/actions/runs/1', updated_at: '2026-11-01T00:00:00Z' }] });
+  if (url.pathname === '/repos/alice/app') return respond({ default_branch: 'main' });
+  if (url.pathname === '/repos/alice/quiet') return respond({ default_branch: 'main' });
+  if (url.pathname === '/repos/alice/quiet/actions/runs') return respond({ workflow_runs: [] });
+  // A newer passing scheduled job sits on top of the failure, as it would in a real repository.
+  if (url.pathname === '/repos/alice/app/actions/runs') {
+    const failedRun = { id: 1, workflow_id: 10, name: 'CI', head_branch: 'main', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/alice/app/actions/runs/1', updated_at: '2026-11-01T00:00:00Z' };
+    // The work log asks by date rather than by branch.
+    if (url.searchParams.has('created')) return respond({ workflow_runs: [failedRun] });
+    if (url.searchParams.get('branch') !== 'main') return respond({ workflow_runs: [] });
+    return respond({ workflow_runs: [
+      { id: 2, workflow_id: 20, name: 'Nightly', head_branch: 'main', status: 'completed', conclusion: 'success', html_url: 'https://github.com/alice/app/actions/runs/2', updated_at: '2026-11-02T00:00:00Z' },
+      failedRun,
+    ] });
+  }
   if (url.pathname === '/users/alice') return respond({ name: 'Alice', public_repos: 3, followers: 5, following: 2 });
-  if (url.pathname === '/users/alice/repos') return respond([{ full_name: 'alice/app', html_url: 'https://github.com/alice/app', description: 'An app', language: 'Go', stargazers_count: 9, pushed_at: '2026-11-01T00:00:00Z' }]);
+  if (url.pathname === '/users/alice/repos') return respond([{ full_name: 'alice/app', html_url: 'https://github.com/alice/app', description: 'An app', language: 'Go', stargazers_count: 9, pushed_at: '2026-11-01T00:00:00Z', default_branch: 'main' }]);
   if (url.pathname === '/users/alice/events/public') return respond([{ type: 'PushEvent', repo: { name: 'alice/app' }, created_at: '2026-11-01T00:00:00Z' }]);
 
   res.statusCode = 404;

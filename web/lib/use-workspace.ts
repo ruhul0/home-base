@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api, ApiError, SignedOutError } from "./api";
+import { isDown } from "./attention";
 import type { ProjectStatus, TimeEntry, Workspace } from "./types";
 
 const SAVE_DELAY_MS = 600;
@@ -152,10 +153,10 @@ export function useProjectStatus(enabled: boolean, listSignature: string, onSign
       const { projects: latest } = await api.dev.projects();
       setProjects(latest);
       setFailed(false);
-      const down = new Set(latest.filter(({ monitor }) => !monitor.up).map(({ url }) => url));
+      const down = new Set(latest.filter(({ monitor }) => isDown(monitor)).map(({ url }) => url));
       if (knownDown.current) {
         for (const project of latest) {
-          if (!project.monitor.up && !knownDown.current.has(project.url)) {
+          if (isDown(project.monitor) && !knownDown.current.has(project.url)) {
             toast.error(`${project.name} is down. ${project.monitor.problem ?? ""}`, { id: `down-${project.url}` });
           }
         }

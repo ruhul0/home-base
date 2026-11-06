@@ -20,6 +20,7 @@ import { WorkspaceCards } from "@/components/dev/workspace-cards";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api, ApiError, clearLocalSession, setToken, SignedOutError } from "@/lib/api";
+import { isDown, isFailedRun } from "@/lib/attention";
 import { apiBase, isExtension, KEYS, storage } from "@/lib/browser";
 import { copyText, placeholdersIn } from "@/lib/commands";
 import { LOGIN_ERRORS, resumeWebLogin, startLogin, trySilentExtensionLogin } from "@/lib/login";
@@ -446,7 +447,7 @@ export function StartPage() {
       ...(project.staging ? [{ label: `Staging: ${project.name}`, section: "Project", keywords, searchOnly: true, icon: FlaskConicalIcon, run: open(project.staging) }] : []),
       ...(project.repo ? [{ label: `Repo: ${project.name}`, section: "Project", keywords, searchOnly: true, icon: GitBranchIcon, run: open(`https://github.com/${project.repo}`) }] : []),
       ...(project.ssh ? [{ label: `Copy SSH: ${project.name}`, section: "Project", keywords: `${keywords} ${project.ssh}`, searchOnly: true, icon: TerminalIcon, run: () => void copyText(project.ssh, `Copied: ${project.ssh}`, toast) }] : []),
-      ...(failedRun?.conclusion === "failure" ? [{ label: `Re-run failed CI: ${project.name}`, section: "Action", keywords, searchOnly: true, icon: RotateCwIcon, run: () => void rerunCI(failedRun.repo, failedRun.id) }] : []),
+      ...(failedRun && isFailedRun(failedRun) ? [{ label: `Re-run failed CI: ${project.name}`, section: "Action", keywords, searchOnly: true, icon: RotateCwIcon, run: () => void rerunCI(failedRun.repo, failedRun.id) }] : []),
     ];
   });
   const commandActions: PaletteAction[] = (workspace?.commands ?? []).map((command) => ({ label: command.name, section: "Command", keywords: command.command, searchOnly: true, icon: TerminalSquareIcon, run: () => applyCommand(command) }));
@@ -555,7 +556,7 @@ export function StartPage() {
               <SearchBox groups={groups} browserLinks={[...topSites, ...bookmarks]} engine={preferences.searchEngine} />
             )}
 
-            {preferences.showAttention && <AttentionBar projects={workspace ? projectStatus.projects : null} projectsFailed={projectStatus.failed} isAdmin={Boolean(user?.isAdmin)} onRerun={(repo, runId) => void rerunCI(repo, runId)} onSignedOut={signedOutElsewhere} />}
+            {preferences.showAttention && <AttentionBar projects={workspace ? projectStatus.projects : null} projectsFailed={projectStatus.failed} isAdmin={Boolean(user?.isAdmin)} watchServers={preferences.showServers} onRerun={(repo, runId) => void rerunCI(repo, runId)} onSignedOut={signedOutElsewhere} />}
 
             <Groups groups={groups} editing={editing} onChange={changeGroups} />
 
@@ -568,7 +569,7 @@ export function StartPage() {
                 {preferences.showClocks && <ClocksCard />}
                 {user?.isAdmin && preferences.showServers && <ServersCard onSignedOut={signedOutElsewhere} />}
                 {preferences.showGitHub && <GitHubCard onSignedOut={signedOutElsewhere} />}
-                <WorkspaceCards preferences={preferences} workspace={workspace} save={saveWorkspace} projectsDown={(projectStatus.projects ?? []).filter(({ monitor }) => !monitor.up).map(({ url }) => url)} onSignedOut={signedOutElsewhere} />
+                <WorkspaceCards preferences={preferences} workspace={workspace} save={saveWorkspace} projectsDown={(projectStatus.projects ?? []).filter(({ monitor }) => isDown(monitor)).map(({ url }) => url)} onSignedOut={signedOutElsewhere} />
                 {preferences.showNews && <NewsCard onSignedOut={signedOutElsewhere} />}
               </section>
             )}

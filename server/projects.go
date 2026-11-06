@@ -259,7 +259,24 @@ func (s *Store) saveDailyRollup(ctx context.Context, address string, result Moni
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, "INSERT INTO monitor_incidents (url_hash, started_at, problem) VALUES (?, UTC_TIMESTAMP(), ?)", key, result.Problem)
+
+	// One failed check is often a blip, and incidents end up in client reports. An incident needs two
+	// failures in a row, and starts from the first of them. This check is already saved, so the one
+	// before it is the second row.
+	var previousUp bool
+	var previousAt time.Time
+	err = s.db.QueryRowContext(ctx,
+		"SELECT up, checked_at FROM monitor_checks WHERE url_hash = ? ORDER BY checked_at DESC, id DESC LIMIT 1 OFFSET 1", key).Scan(&previousUp, &previousAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if previousUp {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, "INSERT INTO monitor_incidents (url_hash, started_at, problem) VALUES (?, ?, ?)", key, previousAt, result.Problem)
 	return err
 }
 
@@ -278,21 +295,33 @@ type ProjectStatus struct {
 	CertificateExpires *time.Time    `json:"certificateExpires"`
 	DomainExpires      *time.Time    `json:"domainExpires"`
 	CI                 *GitHubRun    `json:"ci"`
+	// CIUnreadable means GitHub wouldn't say. A repository with no runs has no CI and isn't unreadable.
+	CIUnreadable bool `json:"ciUnreadable"`
 }
 
-func (a *App) projectRun(ctx context.Context, userID int64, token, repo string) *GitHubRun {
-	key := strconv.FormatInt(userID, 10) + ":" + repo
-	run, _, err := a.dev.projectCI.get(key, projectCILife, func() (*GitHubRun, error) {
-		runs, _ := latestRuns(ctx, token, []GitHubRepo{{Name: repo}})
-		if len(runs) == 0 {
-			return nil, nil
+// projectCIResult keeps "couldn't read it" apart from "there's nothing to read".
+type projectCIResult struct {
+	Run        *GitHubRun
+	Unreadable bool
+}
+
+func (a *App) projectRun(ctx context.Context, userID int64, token string, project Project) projectCIResult {
+	key := strconv.FormatInt(userID, 10) + ":" + project.Repo
+	result, _, err := a.dev.projectCI.get(key, projectCILife, func() (projectCIResult, error) {
+		run, err := repoRun(ctx, token, GitHubRepo{Name: project.Repo, watchBranch: project.DeployRef})
+		if err != nil {
+			// A closed tab cancels the request, which says nothing about the repository.
+			if ctx.Err() != nil {
+				return projectCIResult{}, ctx.Err()
+			}
+			return projectCIResult{Unreadable: true}, nil
 		}
-		return &runs[0], nil
+		return projectCIResult{Run: run}, nil
 	})
 	if err != nil {
-		return nil
+		return projectCIResult{Unreadable: true}
 	}
-	return run
+	return result
 }
 
 func (a *App) handleProjects(w http.ResponseWriter, r *http.Request, current session) {
@@ -317,6 +346,7 @@ func (a *App) handleProjects(w http.ResponseWriter, r *http.Request, current ses
 			status.Monitor.Name = project.Name
 			if history, err := a.store.monitorHistory(ctx, project.URL); err == nil {
 				status.Monitor.History = &history
+				status.Monitor.markUnconfirmed()
 			}
 			if parsed, err := url.Parse(project.URL); err == nil {
 				var certificate, domain sql.NullTime
@@ -331,7 +361,9 @@ func (a *App) handleProjects(w http.ResponseWriter, r *http.Request, current ses
 				}
 			}
 			if project.Repo != "" {
-				status.CI = a.projectRun(ctx, current.userID, token, project.Repo)
+				ci := a.projectRun(ctx, current.userID, token, project)
+				status.CI = ci.Run
+				status.CIUnreadable = ci.Unreadable
 			}
 			results[index] = status
 		}()

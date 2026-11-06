@@ -8,6 +8,87 @@ import (
 	"testing"
 )
 
+func TestCurrentRun(t *testing.T) {
+	cases := []struct {
+		name string
+		runs []workflowRun
+		want int64
+	}{
+		{"a passing scheduled run doesn't hide a failed deploy", []workflowRun{
+			{ID: 3, WorkflowID: 1, HeadBranch: "main", Conclusion: "success", UpdatedAt: "2026-11-03"},
+			{ID: 2, WorkflowID: 2, HeadBranch: "main", Conclusion: "failure", UpdatedAt: "2026-11-02"},
+		}, 2},
+		{"a fixed failure stops counting", []workflowRun{
+			{ID: 3, WorkflowID: 1, HeadBranch: "main", Conclusion: "success", UpdatedAt: "2026-11-03"},
+			{ID: 2, WorkflowID: 1, HeadBranch: "main", Conclusion: "failure", UpdatedAt: "2026-11-02"},
+		}, 3},
+		{"a run in progress replaces its workflow's failure", []workflowRun{
+			{ID: 3, WorkflowID: 1, HeadBranch: "main", Status: "in_progress", UpdatedAt: "2026-11-03"},
+			{ID: 2, WorkflowID: 1, HeadBranch: "main", Conclusion: "failure", UpdatedAt: "2026-11-02"},
+		}, 3},
+		{"a timeout counts as failing", []workflowRun{
+			{ID: 3, WorkflowID: 1, HeadBranch: "main", Conclusion: "success", UpdatedAt: "2026-11-03"},
+			{ID: 2, WorkflowID: 2, HeadBranch: "main", Conclusion: "timed_out", UpdatedAt: "2026-11-02"},
+		}, 2},
+		{"a startup failure counts as failing", []workflowRun{
+			{ID: 3, WorkflowID: 1, HeadBranch: "main", Conclusion: "success", UpdatedAt: "2026-11-03"},
+			{ID: 2, WorkflowID: 2, HeadBranch: "main", Conclusion: "startup_failure", UpdatedAt: "2026-11-02"},
+		}, 2},
+		{"a cancelled run doesn't count as failing", []workflowRun{
+			{ID: 3, WorkflowID: 1, HeadBranch: "main", Conclusion: "success", UpdatedAt: "2026-11-03"},
+			{ID: 2, WorkflowID: 2, HeadBranch: "main", Conclusion: "cancelled", UpdatedAt: "2026-11-02"},
+		}, 3},
+		{"each branch is judged separately", []workflowRun{
+			{ID: 3, WorkflowID: 1, HeadBranch: "main", Conclusion: "success", UpdatedAt: "2026-11-03"},
+			{ID: 2, WorkflowID: 1, HeadBranch: "production", Conclusion: "failure", UpdatedAt: "2026-11-02"},
+		}, 2},
+		{"with no failures, the newest run wins", []workflowRun{
+			{ID: 2, WorkflowID: 2, HeadBranch: "production", Conclusion: "success", UpdatedAt: "2026-11-02"},
+			{ID: 3, WorkflowID: 1, HeadBranch: "main", Conclusion: "success", UpdatedAt: "2026-11-03"},
+		}, 3},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			run, found := currentRun(test.runs)
+			if !found || run.ID != test.want {
+				t.Errorf("got run %d (found %t), want %d", run.ID, found, test.want)
+			}
+		})
+	}
+	if _, found := currentRun(nil); found {
+		t.Error("no runs should find nothing")
+	}
+}
+
+func TestMarkUnconfirmed(t *testing.T) {
+	history := func(ups ...bool) *MonitorHistory {
+		points := []MonitorPoint{}
+		for _, up := range ups {
+			points = append(points, MonitorPoint{Up: up})
+		}
+		return &MonitorHistory{Points: points}
+	}
+	cases := []struct {
+		name   string
+		result MonitorResult
+		want   bool
+	}{
+		{"a failure after a success may be a blip", MonitorResult{History: history(true)}, true},
+		{"a first failure may be a blip", MonitorResult{History: history()}, true},
+		{"a second failure in a row is confirmed", MonitorResult{History: history(true, false)}, false},
+		{"without history, a failure isn't hidden", MonitorResult{}, false},
+		{"a working site is never unconfirmed", MonitorResult{Up: true, History: history(false)}, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			test.result.markUnconfirmed()
+			if test.result.Unconfirmed != test.want {
+				t.Errorf("got %t, want %t", test.result.Unconfirmed, test.want)
+			}
+		})
+	}
+}
+
 func TestIsBlockedAddress(t *testing.T) {
 	blocked := []string{
 		"127.0.0.1", "10.0.0.8", "172.17.0.2", "192.168.1.1", "169.254.169.254", "100.64.0.1",

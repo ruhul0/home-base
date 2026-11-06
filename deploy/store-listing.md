@@ -17,6 +17,10 @@ Home Base replaces the new tab page with one simple place to start.
 - Choose your own colours and layout
 - Sign in with GitHub to see your sites and design on every device
 - See your most visited pages and bookmarks at a glance
+- Press Cmd+K or Ctrl+K to jump to any site, tool or action
+- See your pull requests, CI status and review requests
+- Keep client projects in one place, with uptime, SSL and domain expiry, time tracking and monthly reports
+- Use a built-in toolbox for JSON, JWT, Base64, timestamps, hashes and regex
 
 Your bookmarks and most visited pages stay in your browser and are never sent to the server.
 
@@ -41,7 +45,7 @@ Replaces Chrome's new tab page with a personal start page for search, saved site
 
 ## Data usage answers
 
-- Collected: personally identifiable information (GitHub username and user ID), authentication information (the signed-in session) and website content (the sites the user saves).
+- Collected: personally identifiable information (GitHub username and user ID), authentication information (the signed-in session) and website content (the sites, projects, saved commands, todos, notes and tracked time the user saves).
 - Not sold, not used for unrelated purposes, and not used for creditworthiness or lending.
 
 ## Test instructions for the reviewer

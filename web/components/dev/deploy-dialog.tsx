@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api, ApiError, SignedOutError } from "@/lib/api";
+import { isFailedRun } from "@/lib/attention";
 import type { GitHubRun, Project } from "@/lib/types";
 
 /** Deploying changes a live site, so this always asks first, and Enter lands on Cancel rather than Deploy. */
@@ -59,9 +60,9 @@ export function DeployDialog({
           <dt className="opacity-70">Branch</dt>
           <dd className="truncate font-mono">{project.deployRef || "main"}</dd>
         </dl>
-        {latestRun?.conclusion === "failure" && (
+        {latestRun && isFailedRun(latestRun) && (
           <p className="text-sm text-warning">
-            The latest run here failed: {latestRun.workflow} on {latestRun.branch}.
+            A recent run here didn&apos;t pass: {latestRun.workflow} on {latestRun.branch}.
           </p>
         )}
         {error && (

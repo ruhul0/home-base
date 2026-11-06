@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BellRingIcon, CircleCheckIcon, RotateCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, SignedOutError } from "@/lib/api";
-import { buildAttention, type Severity } from "@/lib/attention";
-import type { GitHubDashboard, MonitoredServer, ProjectStatus } from "@/lib/types";
+import { buildAttention, describeUnchecked, type Severity } from "@/lib/attention";
+import type { GitHubResponse, MonitoredServer, ProjectStatus } from "@/lib/types";
 
 const GITHUB_REFRESH_MS = 5 * 60 * 1000;
 const SERVER_REFRESH_MS = 60 * 1000;
@@ -16,26 +16,29 @@ export function AttentionBar({
   projects,
   projectsFailed,
   isAdmin,
+  watchServers,
   onRerun,
   onSignedOut,
 }: {
   projects: ProjectStatus[] | null;
   projectsFailed: boolean;
   isAdmin: boolean;
+  watchServers: boolean;
   onRerun: (repo: string, runId: number) => void;
   onSignedOut: () => void;
 }) {
-  const [github, setGithub] = useState<GitHubDashboard | null>(null);
+  const [github, setGithub] = useState<GitHubResponse | null>(null);
   const [githubFailed, setGithubFailed] = useState(false);
   const [servers, setServers] = useState<MonitoredServer[] | null>(null);
+  const [serversFailed, setServersFailed] = useState(false);
   const [serverTime, setServerTime] = useState(0);
   const [expanded, setExpanded] = useState(false);
 
   const loadGitHub = useCallback(async () => {
     try {
       const response = await api.dev.github();
-      setGithub(response.data);
-      setGithubFailed(!response.available);
+      setGithub(response);
+      setGithubFailed(false);
     } catch (error) {
       if (error instanceof SignedOutError) onSignedOut();
       else setGithubFailed(true);
@@ -46,9 +49,10 @@ export function AttentionBar({
     try {
       const result = await api.admin.servers();
       setServers(result.servers);
+      setServersFailed(false);
       setServerTime(new Date(result.serverTime).getTime());
     } catch {
-      // The Servers panel reports this. Disk warnings simply wait for the next round.
+      setServersFailed(true);
     }
   }, []);
 
@@ -71,13 +75,14 @@ export function AttentionBar({
     };
   }, [isAdmin, loadServers]);
 
-  const items = useMemo(() => buildAttention(projects ?? [], github, servers, serverTime), [github, projects, serverTime, servers]);
+  const items = useMemo(() => buildAttention(projects ?? [], github?.data ?? null, servers, serverTime), [github, projects, serverTime, servers]);
 
-  // "All clear" is only said once everything has been checked, never while something is unknown.
-  const unreadCI = (projects ?? []).filter((project) => project.repo && !project.ci).length;
-  const unknown = [projectsFailed && "your projects", githubFailed && "GitHub", unreadCI > 0 && `CI on ${unreadCI} ${unreadCI === 1 ? "project" : "projects"}`].filter(Boolean).join(" and ");
+  const unknown = describeUnchecked({ projects, projectsFailed, github, githubFailed, isAdmin, watchServers, servers, serversFailed });
   const loaded = projects !== null || projectsFailed;
   if (!loaded) return null;
+  // Nothing is claimed until every source has answered, so "all clear" can't appear while one is still loading.
+  const answered = (github !== null || githubFailed) && (!isAdmin || servers !== null || serversFailed);
+  if (items.length === 0 && !answered) return null;
 
   if (items.length === 0) {
     return (

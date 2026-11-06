@@ -122,6 +122,8 @@ export interface MonitorResult extends Monitor {
     uptime24h: number | null;
     downSince: string | null;
   };
+  /** This check failed but the one before it didn't, so it may only be a blip. */
+  unconfirmed?: boolean;
 }
 
 export interface ServerReport {
@@ -205,6 +207,8 @@ export interface ProjectStatus extends Project {
   certificateExpires: string | null;
   domainExpires: string | null;
   ci: GitHubRun | null;
+  /** GitHub wouldn't say. A repository with no runs has no CI and isn't unreadable. */
+  ciUnreadable: boolean;
 }
 
 export interface TimeEntry {
