@@ -12,6 +12,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +61,10 @@ jobs:
           npm run build:extension
 
       - name: Build the app image
-        run: docker build -t chrome-home-app -f server/Dockerfile .
+        run: |
+          docker build -t chrome-home-app -f server/Dockerfile \
+            --label com.docker.compose.project=chrome-home \
+            --label org.opencontainers.image.source=https://github.com/${{ github.repository }} .
 
       - name: Run the tests against a temporary database
         run: docker compose -f server/test/stack.yml run --rm --build -T runner
@@ -66,6 +72,16 @@ jobs:
       - name: Remove the temporary database
         if: always()
         run: docker compose -f server/test/stack.yml down -v
+
+      # This is the exact image the tests just ran against. The server pulls it, and builds nothing.
+      - name: Publish the tested image
+        if: vars.DEPLOY_ENABLED == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag chrome-home-app "ghcr.io/ruhul0/home-base:$GITHUB_SHA"
+          docker push "ghcr.io/ruhul0/home-base:$GITHUB_SHA"
 
   deploy:
     # Pull requests never reach this job, so code from forks can't use the deploy key.
@@ -92,7 +108,7 @@ jobs:
       - name: Deploy to the server
         env:
           DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
-        run: ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_TARGET"
+        run: ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_TARGET" "$GITHUB_SHA"
 
       - name: Check the live site
         run: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -m 10 https://chrome.ruhul0.com/api/health
